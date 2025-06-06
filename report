@@ -1,27 +1,4 @@
-1. Repository: smx-jobs
-Objective:
-Integrate PostgreSQL database support into a Java-based job execution framework, ensure compatibility with legacy unit testing infrastructure, and resolve dependency and build failures.
-Key Contributions:
-•	PostgreSQL Integration:
-o	Extended DataSourceProvider.java to support PostgreSQL alongside SQL Server.
-o	Dynamically configured JDBC URL, credentials, and pooling properties using environment variables.
-•	DAO Layer Development:
-o	Referenced SqlServerDataAccessDao.java to build a consistent PostgreSQL-based DAO layer.
-o	Ensured interface consistency and minimal code duplication.
-•	Legacy Unit Testing with JUnit 3:
-o	Developed DatabaseConnectionTest to validate PostgreSQL connectivity.
-o	Used junit.framework.TestCase to maintain compatibility.
-o	Implemented the suite() method and followed legacy naming conventions to resolve silent test execution failures.
-o	Verified correctness through mvn test and IntelliJ integration.
-•	Dependency and Build Fixes:
-o	Resolved failure in resolving apibank-parent:5.3.1 by analyzing parent POM structure and internal Nexus access issues.
-o	Fixed build error caused by deprecated placeholders (${releaseVersion}) in springfox-staticdocs.
-o	Fixed ClassNotFoundException in Apache POI due to a version mismatch between poi-ooxml (v5.0.0) and poi (v4.1.1) by aligning versions.
-Technical Skills Gained:
-•	Working with JDBC, connection pooling, and database abstraction layers.
-•	Troubleshooting Maven build and resolution issues in legacy codebases.
-•	Structuring legacy test frameworks and ensuring continuous integration compatibility.
-________________________________________
+
 2. Repository: smx-widgets
 Objective:
 Develop automated tests to validate widget presence, resolve Node.js build issues, and address security vulnerabilities in frontend dependencies.
@@ -47,23 +24,45 @@ Technical Skills Gained:
 •	Handling frontend automation in asynchronous UI environments.
 •	Managing dependency conflicts and deprecated packages in Node.js.
 •	Securing package resolutions and working within private registry constraints.
-________________________________________
-3. Repository: hive-datamart & sma-rules-engine
-Objective:
-Ensure environment readiness, harden runtime configurations, and mitigate critical vulnerabilities in the reporting and data-processing stack.
+
+
+
+
+
+
 Key Contributions:
-•	Environment Verification:
-o	Validated Java (java -version) and Maven (mvn -v) setups to ensure system readiness for downstream execution.
-o	Confirmed compatibility with PostgreSQL and Spark-based components.
-•	Spark Security Hardening (SparkUtil.java):
-o	Identified risk of remote code execution in Spark standalone deployments.
-o	Enabled Spark authentication via spark.authenticate and secure transport using spark.network.crypto.enabled.
-o	Used environment-sourced secrets to configure Spark runtime securely.
-•	Dependency Management (sma-rules-engine):
-o	Upgraded jackson-databind to v2.12.7.1 to patch deserialization vulnerabilities.
-o	Removed unused transitive dependencies like httpclient to reduce binary bloat and attack surface.
-o	Used provided scope in Maven to improve control over included runtime libraries.
+
+Security Vulnerability Remediation:
+
+Analyzed over a dozen security alerts raised by GitHub Dependabot in the smx-jobs repository, focusing on critical issues in dependencies such as org.postgresql:postgresql, jackson-databind, and others.
+
+Upgraded the PostgreSQL JDBC driver to version 42.6.0+, resolving CVE-2024-1597 and ensuring safe communication between the application and the database layer.
+
+Audited and updated other core dependencies in pom.xml, including lombok, commons-dbcp2, and jsch, while preserving compatibility and avoiding regressions.
+
+Addressed Maven resolution failures involving the parent POM (apibank-parent:5.3.1) and inaccessible internal Nexus URLs by analyzing parent.relativePath configurations.
+
+Dependency Conflict Resolution:
+
+Resolved classloader conflicts due to mismatched versions of Apache POI libraries (poi-ooxml v5.0.0 and poi v4.1.1) by aligning all POI-related modules to consistent versions.
+
+Fixed build failures due to deprecated placeholder variables like ${releaseVersion} in Springfox documentation dependencies.
+
+Unit Test Development & Execution:
+
+Developed and executed custom JUnit 3 test cases to validate upgraded components and ensure PostgreSQL connectivity.
+
+Built a dedicated DatabaseConnectionTest class extending TestCase, and implemented suite() methods for compatibility with legacy test runners.
+
+Verified test execution via both Maven CLI (mvn test) and IntelliJ, resolving issues around silent test skips by correcting naming conventions and suite declarations.
+
+
 Technical Skills Gained:
-•	Working with Spark runtime configurations and security flags.
-•	Mitigating known CVEs in critical Java libraries like Jackson.
-•	Validating secure backend runtime environments for data-intensive systems.
+
+Systematic approach to vulnerability mitigation and dependency realignment in Maven-based enterprise systems.
+
+Writing and troubleshooting legacy unit test frameworks (JUnit 3) to validate functional correctness post upgrade.
+
+Debugging Maven build lifecycle issues, including parent inheritance, repository access, and version incompatibilities.
+
+Gained insights into database connection pool configuration and JDBC integration for multi-database systems.
