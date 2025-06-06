@@ -66,3 +66,15 @@ Writing and troubleshooting legacy unit test frameworks (JUnit 3) to validate fu
 Debugging Maven build lifecycle issues, including parent inheritance, repository access, and version incompatibilities.
 
 Gained insights into database connection pool configuration and JDBC integration for multi-database systems.
+
+
+
+
+val exploded = df.selectExpr("explode(product.productStream) as st")
+  .withColumn("underlying", explode_outer($"st.underlying"))
+  .withColumn("notionalAmount", explode_outer($"st.notionalAmount"))
+
+exploded
+  .filter($"notionalAmount.currency" === $"underlying.fxCurrencyPair.currency")
+  .select("st.legType", "underlying", "notionalAmount")
+  .show(false)
