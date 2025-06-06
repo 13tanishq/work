@@ -67,3 +67,7 @@ Technical Skills Gained:
 •	Working with Spark runtime configurations and security flags.
 •	Mitigating known CVEs in critical Java libraries like Jackson.
 •	Validating secure backend runtime environments for data-intensive systems.
+
+
+
+Resolve over 100 critical GitHub Dependabot security alerts across the reporting and data-processing stack by upgrading vulnerable dependencies, validating the stability of the upgraded components, and enforcing secure runtime configurations in production-facing systems.
