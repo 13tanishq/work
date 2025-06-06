@@ -49,25 +49,44 @@ Technical Skills Gained:
 •	Securing package resolutions and working within private registry constraints.
 ________________________________________
 3. Repository: hive-datamart & sma-rules-engine
-Objective:
-Ensure environment readiness, harden runtime configurations, and mitigate critical vulnerabilities in the reporting and data-processing stack.
 Key Contributions:
-•	Environment Verification:
-o	Validated Java (java -version) and Maven (mvn -v) setups to ensure system readiness for downstream execution.
-o	Confirmed compatibility with PostgreSQL and Spark-based components.
-•	Spark Security Hardening (SparkUtil.java):
-o	Identified risk of remote code execution in Spark standalone deployments.
-o	Enabled Spark authentication via spark.authenticate and secure transport using spark.network.crypto.enabled.
-o	Used environment-sourced secrets to configure Spark runtime securely.
-•	Dependency Management (sma-rules-engine):
-o	Upgraded jackson-databind to v2.12.7.1 to patch deserialization vulnerabilities.
-o	Removed unused transitive dependencies like httpclient to reduce binary bloat and attack surface.
-o	Used provided scope in Maven to improve control over included runtime libraries.
+
+Dependabot Vulnerability Mitigation:
+
+Conducted a thorough audit of flagged vulnerabilities across hive-datamart and sma-rules-engine, focusing on high-risk CVEs, especially within Apache Spark and Jackson libraries.
+
+Upgraded jackson-databind to version 2.12.7.1, eliminating multiple deserialization-related CVEs while maintaining compatibility with existing modules.
+
+Carefully reviewed pom.xml files to upgrade dependencies without introducing transitive conflicts. Where necessary, excluded unnecessary libraries like httpclient and enforced provided scopes to reduce attack surface.
+
+Testing and Validation:
+
+After each upgrade, executed full test cycles to verify that data processing, rules engine execution, and integration flows remained unaffected.
+
+Ensured that version bumps did not break build jobs, connector pipelines, or downstream dependencies across repositories.
+
+Spark Runtime Hardening:
+
+Addressed unsecured configuration defaults in SparkUtil.java.
+
+Enabled Spark authentication (spark.authenticate) and encryption (spark.network.crypto.enabled) using secure environment-sourced credentials and config flags.
+
+Ensured these security measures did not affect cluster behavior or data transformation pipelines by running verification tests in the UAT environment.
+
+Environment Readiness & Compatibility Checks:
+
+Verified installations and versions of Java and Maven across build systems (java -version, mvn -v) to prevent runtime incompatibilities.
+
+Confirmed PostgreSQL connectivity and compatibility with other jobs that interface with hive-datamart.
+
 Technical Skills Gained:
-•	Working with Spark runtime configurations and security flags.
-•	Mitigating known CVEs in critical Java libraries like Jackson.
-•	Validating secure backend runtime environments for data-intensive systems.
 
+Remediation of large-scale security issues using GitHub Dependabot reports.
 
+Controlled dependency upgrades in production-sensitive Java systems.
+
+Runtime hardening of distributed processing engines like Apache Spark.
+
+Ensuring security compliance without compromising runtime functionality.
 
 Resolve over 100 critical GitHub Dependabot security alerts across the reporting and data-processing stack by upgrading vulnerable dependencies, validating the stability of the upgraded components, and enforcing secure runtime configurations in production-facing systems.
