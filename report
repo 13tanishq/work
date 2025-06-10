@@ -27,20 +27,4 @@ Technical Skills Gained:
 
 
 
-CASE 
-  WHEN datamodel.trade.reference = 'TRADE_ON_OTC_V2' THEN 
-    element_at(
-      transform(
-        filter(
-          flatten(
-            transform(
-              filter(product.productStream, x -> x.legType = 'Near'),
-              x -> x.observable
-            )
-          ),
-          y -> y.observableType IN ('SpotPrice', 'ForwardPrice')
-        ),
-        z -> z.fixedValue
-      ),
-    1)
-END
+"map_function": "CASE WHEN datamodel.trade.reference = 'TRADE_ON_OTC_V2' THEN element_at(transform(filter(flatten(transform(filter(product.productStream, x -> x.legType = 'Near'), x -> filter(x.notionalAmount, n -> n.amountType = 'Current' and exists(x.underlying, u -> exists(u.fxCurrencyPair, fx -> fx.currency1 = n.currency))))), y -> true), z -> cast(z.amount as decimal(20,2))), 1) END"
