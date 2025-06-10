@@ -27,4 +27,4 @@ Technical Skills Gained:
 
 
 
-"map_function": "CASE WHEN datamodel.trade.reference = 'TRADE_ON_OTC_V2' THEN element_at(transform(filter(flatten(transform(filter(product.productStream, x -> x.legType = 'Near'), x -> filter(x.notionalAmount, n -> n.amountType = 'Current' and exists(x.underlying, u -> exists(u.fxCurrencyPair, fx -> fx.currency1 = n.currency))))), y -> true), z -> cast(z.amount as decimal(20,2))), 1) END"
+"map_function": "CASE WHEN datamodel_trade.reference = 'TRADE_ON_OTC_V2' THEN transform(element_at(filter(transform(product.productStream, x -> filter(x.notionalAmount, n -> n.amountType = 'Current' and exists(x.underlying, u -> u.fxCurrencyPair.currency1 = n.currency)))[0]), y -> y.legType in ('Far','Forward')), 1).amount, z -> cast(z as decimal(20,2))) END"
