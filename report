@@ -27,54 +27,20 @@ Technical Skills Gained:
 
 
 
-
-Resolve multiple GitHub Dependabot-reported security vulnerabilities in a Java-based job execution system by upgrading affected dependencies and verifying system stability through legacy-compatible unit testing. Additionally, ensure secure and consistent PostgreSQL database integration.
-
-Key Contributions:
-
-Security Vulnerability Remediation:
-
-Analyzed over a dozen security alerts raised by GitHub Dependabot in the smx-jobs repository, focusing on critical issues in dependencies such as org.postgresql:postgresql, jackson-databind, and others.
-
-Upgraded the PostgreSQL JDBC driver to version 42.6.0+, resolving CVE-2024-1597 and ensuring safe communication between the application and the database layer.
-
-Audited and updated other core dependencies in pom.xml, including lombok, commons-dbcp2, and jsch, while preserving compatibility and avoiding regressions.
-
-Addressed Maven resolution failures involving the parent POM (apibank-parent:5.3.1) and inaccessible internal Nexus URLs by analyzing parent.relativePath configurations.
-
-Dependency Conflict Resolution:
-
-Resolved classloader conflicts due to mismatched versions of Apache POI libraries (poi-ooxml v5.0.0 and poi v4.1.1) by aligning all POI-related modules to consistent versions.
-
-Fixed build failures due to deprecated placeholder variables like ${releaseVersion} in Springfox documentation dependencies.
-
-Unit Test Development & Execution:
-
-Developed and executed custom JUnit 3 test cases to validate upgraded components and ensure PostgreSQL connectivity.
-
-Built a dedicated DatabaseConnectionTest class extending TestCase, and implemented suite() methods for compatibility with legacy test runners.
-
-Verified test execution via both Maven CLI (mvn test) and IntelliJ, resolving issues around silent test skips by correcting naming conventions and suite declarations.
-
-
-Technical Skills Gained:
-
-Systematic approach to vulnerability mitigation and dependency realignment in Maven-based enterprise systems.
-
-Writing and troubleshooting legacy unit test frameworks (JUnit 3) to validate functional correctness post upgrade.
-
-Debugging Maven build lifecycle issues, including parent inheritance, repository access, and version incompatibilities.
-
-Gained insights into database connection pool configuration and JDBC integration for multi-database systems.
-
-
-
-
-val exploded = df.selectExpr("explode(product.productStream) as st")
-  .withColumn("underlying", explode_outer($"st.underlying"))
-  .withColumn("notionalAmount", explode_outer($"st.notionalAmount"))
-
-exploded
-  .filter($"notionalAmount.currency" === $"underlying.fxCurrencyPair.currency")
-  .select("st.legType", "underlying", "notionalAmount")
-  .show(false)
+CASE 
+  WHEN datamodel.trade.reference = 'TRADE_ON_OTC_V2' THEN 
+    element_at(
+      transform(
+        filter(
+          flatten(
+            transform(
+              filter(product.productStream, x -> x.legType = 'Near'),
+              x -> x.observable
+            )
+          ),
+          y -> y.observableType IN ('SpotPrice', 'ForwardPrice')
+        ),
+        z -> z.fixedValue
+      ),
+    1)
+END
