@@ -26,5 +26,5 @@ Technical Skills Gained:
 •	Securing package resolutions and working within private registry constraints.
 
 
-
+"map_function": "CASE WHEN datamodel_trade.reference = 'TRADE_ON_OTC_V2' THEN element_at(transform(flatten(transform(product.productStream, x -> x.legType IN ('Far','Forward') AND exists(x.notionalAmount, n -> n.amountType = 'Current' AND exists(x.underlying, u -> u.fxCurrencyPair.currency1 = n.currency)))), z -> cast(z.amount as decimal(20,2))), 1) END"
 "map_function": "CASE WHEN datamodel_trade.reference = 'TRADE_ON_OTC_V2' THEN transform(element_at(filter(transform(product.productStream, x -> filter(x.notionalAmount, n -> n.amountType = 'Current' and exists(x.underlying, u -> u.fxCurrencyPair.currency1 = n.currency)))[0]), y -> y.legType in ('Far','Forward')), 1).amount, z -> cast(z as decimal(20,2))) END"
