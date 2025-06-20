@@ -25,6 +25,4 @@ Technical Skills Gained:
 •	Managing dependency conflicts and deprecated packages in Node.js.
 •	Securing package resolutions and working within private registry constraints.
 
-CASE WHEN datamodel_trade.reference = 'TRADE_ON_OTC_V2' THEN element_at(element_at(product.productStream, 1).underlying, 1).fxCurrencyPair.currency1 WHEN specifictypologyfullname = 'Fxswap' THEN (SELECT u.fxCurrencyPair.currency1 FROM UNNEST(product.productStream) AS ps CROSS JOIN UNNEST(ps.underlying) AS u WHERE u.legtype = 'near' LIMIT 1) ELSE NULL END
-
-CASE WHEN datamodel_trade.reference = 'TRADE_ON_OTC_V2' THEN element_at(element_at(product.productStream, 1).underlying, 1).fxCurrencyPair.currency1 WHEN specifictypologyfullname = 'Fxswap' THEN (SELECT u.fxCurrencyPair.currency1 FROM UNNEST(product.productStream) AS ps CROSS JOIN UNNEST(ps.underlying) AS u WHERE u.legtype = 'near' LIMIT 1) ELSE NULL END
+CASE WHEN datamodel_trade.reference = 'TRADE_ON_OTC_V2' THEN element_at(element_at(product.productStream, 1).underlying, 1).fxCurrencyPair.currency1 WHEN specifictypologyfullname = 'Fxswap' THEN (SELECT fxCurrencyPair.currency1 FROM (SELECT explode(product.productStream) AS ps) tmp1 LATERAL VIEW explode(ps.underlying) tmp2 AS u WHERE u.legtype = 'near' LIMIT 1) ELSE NULL END
