@@ -25,4 +25,4 @@ Technical Skills Gained:
 •	Managing dependency conflicts and deprecated packages in Node.js.
 •	Securing package resolutions and working within private registry constraints.
 
-THEN (SELECT u.fxCurrencyPair.currency1 FROM (SELECT ps.underlying AS under FROM product.productStream ps WHERE ps.legType = 'near') tmp LATERAL VIEW explode(tmp.under) tmp2 AS u LIMIT 1) ELSE NULL END
+THEN (SELECT u.fxCurrencyPair.currency1 FROM (SELECT explode(product.productStream) AS ps) tmp1 LATERAL VIEW explode(ps.underlying) tmp2 AS u WHERE ps.legType = 'near' LIMIT 1) ELSE NULL END
