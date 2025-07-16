@@ -1,41 +1,42 @@
-## tps‑datalake‑trade‑extraction‑api
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+import java.util.List;
 
-**Objective:**
-Build a resilient, Java‑based Spring Boot microservice that ingests high‑volume FX trade events from the TPS system into a centralized data lake, applies a fully configurable JSON‑driven Spark SQL layer to normalize and enrich each record into 24 discrete fields—complete with null‑safety checks, type casts, and standardized Asia/Shanghai date/time conversions—and exposes the transformed dataset via a fault‑tolerant REST API supporting pagination, filtering, and end‑to‑end lineage, all integrated into a CI/CD pipeline for seamless promotion from development to production.
+@RestControllerAdvice
+public class GlobalExceptionHandler {
 
-**Key Contributions:**
+    // Your existing handler(s) can remain here...
+    @ExceptionHandler(ServiceRequestException.class)
+    public ResponseEntity<String> handleValidationErrors(ServiceRequestException ex) {
+        return new ResponseEntity<String>(ex.getMessage(), HttpStatus.BAD_REQUEST);
+    }
+    
+    /**
+     * ✅ THIS IS THE PERFECTED METHOD TO ADD.
+     * It will catch your custom exception and use your ErrorResponse class to format the JSON output.
+     */
+    @ExceptionHandler(ClientBadRequestException.class)
+    public ResponseEntity<ErrorResponse> handleClientBadRequestException(ClientBadRequestException ex) {
+        
+        // Get the message and error list from your exception
+        String message = ex.getMessage();
+        List<String> details = ex.getErrors(); // Using the correct getErrors() method
+        
+        // Create the error response object that will be serialized to JSON
+        ErrorResponse errorResponse = new ErrorResponse(message, details);
+        
+        // Return the error object with a 400 Bad Request status
+        return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
+    }
+}
 
-1. **Comprehensive Field Extraction:**
 
-   * Defined and implemented Spark SQL expressions for all 24 target fields, ranging from simple header pulls (e.g., `tradeId`, `counterparty`, `broker`) to complex nested traversals (`ccy1`/`ccy2`, `amount1`/`amount2`, `price1`/`price2`) using 1‑based `element_at` calls.
-   * Developed unified logic for `wayOfNearLeg` and `wayOfFarLeg` that filters on `legType`, matches payer/receiver flags, and constructs an array of “Buy”/“Sell” labels via `filter`, `transform`, `array_union`, and `array_contains`, guaranteeing correct outputs even when both legs share the same currency.
-   * Created conditional mappings for optional option terms (`strikePrice`, `optionType`), falling back to null values for vanilla forwards.
 
-2. **Robust Date and Numeric Handling:**
+// Change the line above to this:
+// This throws your custom exception, which WILL be handled by the GlobalExceptionHandler.
+// We convert the map of errors to a list of error messages.
+import java.util.ArrayList; // Make sure to import ArrayList
 
-   * Standardized all timestamp fields (`inputTimestamp`, `tradeDate`, `settlementDate`, `maturityDate`) by converting raw UTC epoch values into Asia/Shanghai local time, formatting them as `yyyy‑MM‑dd HH:mm:ss` or `yyyy‑MM‑dd` for both human readability and Hive partitioning.
-   * Enforced consistent numeric precision by casting all monetary and price fields to `DECIMAL(20,4)` and using `format_number` or `concat_ws` for comma‑separated string outputs, eliminating unwanted exponential notation.
-
-3. **Null‑Safe, JSON‑Driven Configuration:**
-
-   * Encapsulated every mapping rule in external `.json` files, complete with default‑value expressions and `CASE WHEN … IS NOT NULL` guards to prevent Unix‑epoch fallbacks and null‑pointer failures.
-   * Enabled non‑developer stakeholders to modify extraction logic by simply updating JSON configs, thus decoupling mapping changes from Java code releases.
-
-4. **Iterative Validation in Spark Shell:**
-
-   * Executed thorough end‑to‑end field validation using Scala REPL commands (`df.printSchema()`, `df.show(false)`, `explode`, `size`) against curated JSON samples, iteratively refining filters and casting logic until all edge cases (missing legs, zero amounts, null dates) produced correct outputs.
-
-5. **Error Diagnosis and Refactoring:**
-
-   * Diagnosed and resolved complex Spark SQL errors, including mismatched `CASE‑WHEN` nesting and invalid array comparisons, by refactoring expressions to employ `array_contains` and consolidating repeated logic into reusable UDF‑like JSON snippets.
-   * Streamlined mapping code by abstracting common array‑traversal patterns into parameterized JSON templates, reducing duplication by over 40%.
-
-**Technical Skills Gained:**
-
-1. I designed and implemented a production‑grade Spring Boot microservice in Java, modularizing complex Spark SQL transformations into maintainable JSON configurations.
-2. I mastered intricate Spark DataFrame and SQL expressions—leveraging `element_at`, `filter`, `transform`, `array_union`, and `explode`—to reliably extract deeply nested fields.
-3. I became proficient in timezone manipulation and date formatting, converting raw UTC epochs into localized strings for both human‑readable reports and Hive partitions.
-4. I developed advanced debugging and validation workflows in Scala REPL, enhancing my ability to diagnose schema mismatches and null‑propagation issues in large‑scale ETL jobs.
-5. I learned how to enforce data quality through automated integration tests (JUnit + Mockito) and CI/CD pipelines, ensuring mapping logic remains correct as configurations evolve.
-6. I honed best practices in Git branching and merge conflict resolution, confidently handling “non‑fast‑forward” errors and upstream tracking setups.
-7. I improved cross‑team communication by authoring comprehensive mapping documentation and delivering internal workshops on scalable, schema‑driven ETL design.
+throw new ClientBadRequestException("Invalid Request", new ArrayList<>(errors.values()));
