@@ -1,118 +1,46 @@
-package com.socgen.sirocco.consumerapi.exceptions;
+// Add these imports to the top of your GlobalExceptionHandler.java file
+import com.fasterxml.jackson.core.JsonParseException;
+import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.http.converter.HttpMessageNotReadableException;
-import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.web.context.request.WebRequest;
-import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
+// ...
 
-import java.util.ArrayList;
-import java.util.List;
+// Replace the existing method with this new version
+@Override
+protected ResponseEntity<Object> handleHttpMessageNotReadable(
+        HttpMessageNotReadableException ex,
+        HttpHeaders headers,
+        HttpStatus status,
+        WebRequest request) {
 
-@RestControllerAdvice
-// ✅ Extend this class to handle Spring's built-in exceptions
-public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
+    String friendlyMessage;
+    Throwable cause = ex.getCause();
 
-    /**
-     * ✅ HANDLER FOR MALFORMED JSON
-     * This is the specific fix for your issue. It's called when the request body is not valid JSON.
-     */
-    @Override
-    protected ResponseEntity<Object> handleHttpMessageNotReadable(HttpMessageNotReadableException ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
-        List<String> details = new ArrayList<>();
-        // Provides a more specific error than just the message, e.g., location of the syntax error.
-        details.add(ex.getLocalizedMessage()); 
-        
-        ErrorResponse errorResponse = new ErrorResponse("Malformed JSON request", details);
-        return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
-    }
-
-    /**
-     * ✅ HANDLER FOR VALIDATION FAILURES (@Valid)
-     * This handles cases where the JSON is valid, but the data violates your validation rules (e.g., @NotNull, @Size).
-     */
-    @Override
-    protected ResponseEntity<Object> handleMethodArgumentNotValid(MethodArgumentNotValidException ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
-        List<String> details = new ArrayList<>();
-        ex.getBindingResult().getFieldErrors().forEach(error -> 
-            details.add(error.getField() + ": " + error.getDefaultMessage())
+    // Check if the root cause is a JSON parsing error
+    if (cause instanceof JsonParseException) {
+        JsonParseException jpe = (JsonParseException) cause;
+        friendlyMessage = String.format(
+            "The request could not be understood due to a syntax error in the JSON. The error is near line %d, column %d. Please check for issues like missing commas, brackets [], or braces {}.",
+            jpe.getLocation().getLineNr(),
+            jpe.getLocation().getColumnNr()
         );
-        
-        ErrorResponse errorResponse = new ErrorResponse("Validation Failed", details);
-        return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
-    }
-    
-    /**
-     * Your existing custom exception handler for ClientBadRequestException.
-     * It's good practice to make all handlers return a consistent ErrorResponse object.
-     */
-    @ExceptionHandler(ClientBadRequestException.class)
-    public ResponseEntity<ErrorResponse> handleClientBadRequestException(ClientBadRequestException ex) {
-        // Assuming your ErrorResponse constructor can handle a message and a list of errors.
-        ErrorResponse errorResponse = new ErrorResponse(ex.getMessage(), ex.getErrors()); 
-        return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
+    // Optional: Add a check for type mismatches (e.g., sending "abc" for a number field)
+    } else if (cause instanceof InvalidFormatException) {
+        InvalidFormatException ife = (InvalidFormatException) cause;
+        String fieldName = ife.getPath().stream()
+                                .map(ref -> ref.getFieldName())
+                                .findFirst().orElse("unknown field");
+        friendlyMessage = String.format(
+            "The value provided for the field '%s' has the wrong format. Please provide a value of the correct type.",
+            fieldName
+        );
+    } else {
+        // Generic fallback message
+        friendlyMessage = "The request body is malformed or contains invalid JSON.";
     }
 
-    /**
-     * Your existing handler for ServiceRequestException.
-     * This is kept for any other specific bad requests you might throw manually.
-     */
-    @ExceptionHandler(ServiceRequestException.class)
-    public ResponseEntity<String> handleValidationErrors(ServiceRequestException ex) {
-        return new ResponseEntity<>(ex.getMessage(), HttpStatus.BAD_REQUEST);
-    }
+    // Create the ErrorResponse, passing null or an empty list for the details
+    // so it doesn't appear in the final JSON output.
+    ErrorResponse errorResponse = new ErrorResponse(friendlyMessage, null);
+
+    return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
 }
-
-
-
-
-
-
-
-
-/**
-     * ✅ HANDLER FOR YOUR CUSTOM UNAUTHORIZED EXCEPTION
-     * This is called when you manually throw a ClientUnauthorizedException from your code,
-     * for example when a user is authenticated but lacks specific permissions.
-     */
-    @ExceptionHandler(ClientUnauthorizedException.class)
-    public ResponseEntity<ErrorResponse> handleClientUnauthorizedException(ClientUnauthorizedException ex) {
-        // Assuming ClientUnauthorizedException has a structure similar to your other exceptions.
-        // If it only has a message, you might need to adjust this.
-        ErrorResponse errorResponse = new ErrorResponse(ex.getMessage(), ex.getErrors()); 
-        
-        // Return a 401 Unauthorized status
-        return new ResponseEntity<>(errorResponse, HttpStatus.UNAUTHORIZED);
-    }
-
-
-
-
-
-
-import java.util.ArrayList; // Make sure you have this import
-import java.util.List;      // And this one
-
-// ... inside the GlobalExceptionHandler class
-
-    /**
-     * ✅ HANDLER FOR YOUR CUSTOM UNAUTHORIZED EXCEPTION (Corrected Version)
-     * This is called when you manually throw a ClientUnauthorizedException from your code.
-     * It's designed to match your specific ClientUnauthorizedException class.
-     */
-    @ExceptionHandler(ClientUnauthorizedException.class)
-    public ResponseEntity<ErrorResponse> handleClientUnauthorizedException(ClientUnauthorizedException ex) {
-        // Since your exception only has a single message, we create a list to hold it.
-        List<String> details = new ArrayList<>();
-        details.add(ex.getMessage());
-
-        // Create the ErrorResponse with a generic title and the specific message in the details.
-        ErrorResponse errorResponse = new ErrorResponse("Unauthorized", details);
-        
-        // Return a 401 Unauthorized status
-        return new ResponseEntity<>(errorResponse, HttpStatus.UNAUTHORIZED);
-    }
