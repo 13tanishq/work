@@ -66,3 +66,25 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return new ResponseEntity<>(ex.getMessage(), HttpStatus.BAD_REQUEST);
     }
 }
+
+
+
+
+
+
+
+
+/**
+     * ✅ HANDLER FOR YOUR CUSTOM UNAUTHORIZED EXCEPTION
+     * This is called when you manually throw a ClientUnauthorizedException from your code,
+     * for example when a user is authenticated but lacks specific permissions.
+     */
+    @ExceptionHandler(ClientUnauthorizedException.class)
+    public ResponseEntity<ErrorResponse> handleClientUnauthorizedException(ClientUnauthorizedException ex) {
+        // Assuming ClientUnauthorizedException has a structure similar to your other exceptions.
+        // If it only has a message, you might need to adjust this.
+        ErrorResponse errorResponse = new ErrorResponse(ex.getMessage(), ex.getErrors()); 
+        
+        // Return a 401 Unauthorized status
+        return new ResponseEntity<>(errorResponse, HttpStatus.UNAUTHORIZED);
+    }
