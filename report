@@ -88,3 +88,31 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         // Return a 401 Unauthorized status
         return new ResponseEntity<>(errorResponse, HttpStatus.UNAUTHORIZED);
     }
+
+
+
+
+
+
+import java.util.ArrayList; // Make sure you have this import
+import java.util.List;      // And this one
+
+// ... inside the GlobalExceptionHandler class
+
+    /**
+     * ✅ HANDLER FOR YOUR CUSTOM UNAUTHORIZED EXCEPTION (Corrected Version)
+     * This is called when you manually throw a ClientUnauthorizedException from your code.
+     * It's designed to match your specific ClientUnauthorizedException class.
+     */
+    @ExceptionHandler(ClientUnauthorizedException.class)
+    public ResponseEntity<ErrorResponse> handleClientUnauthorizedException(ClientUnauthorizedException ex) {
+        // Since your exception only has a single message, we create a list to hold it.
+        List<String> details = new ArrayList<>();
+        details.add(ex.getMessage());
+
+        // Create the ErrorResponse with a generic title and the specific message in the details.
+        ErrorResponse errorResponse = new ErrorResponse("Unauthorized", details);
+        
+        // Return a 401 Unauthorized status
+        return new ResponseEntity<>(errorResponse, HttpStatus.UNAUTHORIZED);
+    }
