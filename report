@@ -1,46 +1,89 @@
-// Add these imports to the top of your GlobalExceptionHandler.java file
+package com.socgen.sirocco.consumerapi.exceptions.handler;
+
 import com.fasterxml.jackson.core.JsonParseException;
+import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.exc.InvalidFormatException;
+import com.fasterxml.jackson.databind.exc.MismatchedInputException;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
-// ...
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
-// Replace the existing method with this new version
-@Override
-protected ResponseEntity<Object> handleHttpMessageNotReadable(
-        HttpMessageNotReadableException ex,
-        HttpHeaders headers,
-        HttpStatus status,
-        WebRequest request) {
+@RestControllerAdvice
+public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
-    String friendlyMessage;
-    Throwable cause = ex.getCause();
+    @Override
+    protected ResponseEntity<Object> handleHttpMessageNotReadable(
+            HttpMessageNotReadableException ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
 
-    // Check if the root cause is a JSON parsing error
-    if (cause instanceof JsonParseException) {
-        JsonParseException jpe = (JsonParseException) cause;
-        friendlyMessage = String.format(
-            "The request could not be understood due to a syntax error in the JSON. The error is near line %d, column %d. Please check for issues like missing commas, brackets [], or braces {}.",
-            jpe.getLocation().getLineNr(),
-            jpe.getLocation().getColumnNr()
-        );
-    // Optional: Add a check for type mismatches (e.g., sending "abc" for a number field)
-    } else if (cause instanceof InvalidFormatException) {
-        InvalidFormatException ife = (InvalidFormatException) cause;
-        String fieldName = ife.getPath().stream()
-                                .map(ref -> ref.getFieldName())
-                                .findFirst().orElse("unknown field");
-        friendlyMessage = String.format(
-            "The value provided for the field '%s' has the wrong format. Please provide a value of the correct type.",
-            fieldName
-        );
-    } else {
-        // Generic fallback message
-        friendlyMessage = "The request body is malformed or contains invalid JSON.";
+        String message = "Invalid JSON format. Please check the request body syntax.";
+        Throwable cause = ex.getCause();
+
+        if (cause instanceof JsonParseException) {
+            JsonParseException jpe = (JsonParseException) cause;
+            String fieldName = jpe.getProcessor().getCurrentName();
+            String correctionHint = generateCorrectionHint(jpe.getOriginalMessage());
+            message = String.format("Invalid JSON syntax near field '%s'. Suggestion: %s", fieldName, correctionHint);
+        
+        } else if (cause instanceof JsonMappingException) {
+            JsonMappingException jme = (JsonMappingException) cause;
+            String fieldPath = extractFieldPath(jme);
+            String correctionHint = "Invalid value or format.";
+
+            if (cause instanceof MismatchedInputException) {
+                correctionHint = generateTypeErrorHint((MismatchedInputException) cause);
+            } else if (cause instanceof InvalidFormatException) {
+                correctionHint = generateFormatErrorHint((InvalidFormatException) cause);
+            }
+            
+            message = String.format("Invalid value for field '%s'. Suggestion: %s", fieldPath, correctionHint);
+        }
+
+        Map<String, Object> errorResponse = new HashMap<>();
+        errorResponse.put("message", message);
+
+        return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
+    }
+    
+    // --- Private Helper Methods (Place these inside the GlobalExceptionHandler class) ---
+
+    private String generateCorrectionHint(String originalMessage) {
+        if (originalMessage.contains("was expecting comma")) return "Missing a comma ',' between elements or properties.";
+        if (originalMessage.contains("Unexpected character (')")) return "Use double quotes \" for keys and string values, not single quotes.";
+        if (originalMessage.contains("was expecting a colon")) return "Missing a colon ':' between a key and its value.";
+        if (originalMessage.contains("Unexpected end-of-input: expected close marker for")) {
+            if (originalMessage.contains("Array")) return "Missing a closing square bracket ']' for an array.";
+            if (originalMessage.contains("Object")) return "Missing a closing curly brace '}' for an object.";
+        }
+        return "Check for syntax errors like missing brackets, quotes, or commas.";
     }
 
-    // Create the ErrorResponse, passing null or an empty list for the details
-    // so it doesn't appear in the final JSON output.
-    ErrorResponse errorResponse = new ErrorResponse(friendlyMessage, null);
+    private String generateTypeErrorHint(MismatchedInputException mie) {
+        Class<?> targetType = mie.getTargetType();
+        if (targetType == null) return "Invalid data type provided.";
+        if (List.class.isAssignableFrom(targetType)) return "Expected an array format, like [\"value1\", \"value2\"].";
+        if (Number.class.isAssignableFrom(targetType)) return "Expected a numeric value.";
+        if (Boolean.class.isAssignableFrom(targetType)) return "Expected a boolean value (true or false).";
+        return String.format("Expected a value of type '%s'.", targetType.getSimpleName());
+    }
 
-    return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
+    private String generateFormatErrorHint(InvalidFormatException ife) {
+        return String.format("Value '%s' has an invalid format for the expected type '%s'.", ife.getValue(), ife.getTargetType().getSimpleName());
+    }
+
+    private String extractFieldPath(JsonMappingException jme) {
+        return jme.getPath().stream()
+                .map(JsonMappingException.Reference::getFieldName)
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.joining("."));
+    }
 }
