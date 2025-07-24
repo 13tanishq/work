@@ -1,27 +1,28 @@
-# --- Generic Messages for javax.validation Annotations ---
-# Spring Boot will automatically use these messages for the corresponding annotations.
-javax.validation.constraints.NotNull.message=The field is required and cannot be null.
-javax.validation.constraints.NotEmpty.message=The field cannot be empty.
-javax.validation.constraints.Email.message=The value must be a valid email address.
-javax.validation.constraints.Size.message=The size must be between {min} and {max}.
-javax.validation.constraints.Pattern.message=The value does not match the required format: {regexp}
-
-# --- You can also create more specific messages if needed ---
-# Pattern.receiverInfo.sndCod=The 'sndCod' must be exactly 3 uppercase letters.
+javax.validation.constraints.NotNull.message=This field is required and cannot be empty.
+javax.validation.constraints.NotEmpty.message=Please provide at least one value for this field.
+javax.validation.constraints.Email.message=Please enter a valid email address.
+javax.validation.constraints.Size.message=This field must have between {min} and {max} items.
 
 
-# --- Generic JSON Syntax Error Messages ---
-# These keys are used by our custom exception handler.
-json.syntax.error.generic=Invalid JSON syntax in field ''{0}''. Please check for errors like mismatched brackets, quotes, or colons.
-json.syntax.error.missing.comma=Invalid JSON syntax in the ''{0}'' object. A comma '','' is missing between properties.
-json.syntax.error.unclosed.array=Invalid JSON syntax in field ''{0}''. The array is missing a closing square bracket ']'.
-json.syntax.error.unclosed.object=Invalid JSON syntax in field ''{0}''. The object is missing a closing curly brace '}'.
+
+
+# User-friendly error messages for JSON syntax issues
+json.error.general=There seems to be a formatting issue in {0}. Please check that all brackets and quotes are properly matched.
+
+json.error.missing.comma=It looks like there's a missing comma in {0}. Make sure each item is separated by a comma.
+
+json.error.unclosed.array=The list in {0} is missing its closing bracket ]. Please add the closing bracket at the end of the list.
+
+json.error.unclosed.object=The section {0} is missing its closing brace }}. Please add the closing brace at the end of that section.
+
+json.error.unexpected.character=There's an unexpected character in {0}. Please check for extra commas, quotes, or brackets that shouldn't be there.
+
 
 
 package com.socgen.sirocco.consumerapi.exceptions.handler;
 
 import com.fasterxml.jackson.core.JsonParseException;
-import com.fasterxml.jackson.core.JsonStreamContext;
+import.jackson.core.JsonStreamContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.MessageSource;
 import org.springframework.http.HttpHeaders;
@@ -32,8 +33,11 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
+import org.springframework.util.StreamUtils;
 
+import javax.servlet.http.HttpServletRequest;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -44,68 +48,132 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @Autowired
     private MessageSource messageSource;
 
-    // HANDLER 1: For JSON SYNTAX errors (e.g., missing comma, unclosed bracket)
+    @Autowired
+    private HttpServletRequest httpServletRequest;
+
+    /**
+     * Handles JSON syntax errors - includes the malformed JSON in response
+     */
     @Override
     protected ResponseEntity<Object> handleHttpMessageNotReadable(
-            HttpMessageNotReadableException ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
+            HttpMessageNotReadableException ex,
+            HttpHeaders headers,
+            HttpStatus status,
+            WebRequest request) {
 
-        String message;
+        String rawJsonInput = extractRequestBody();
+        String userFriendlyHint = "There's an issue with your request format.";
+        
         Throwable cause = ex.getCause();
 
         if (cause instanceof JsonParseException) {
             JsonParseException jpe = (JsonParseException) cause;
-            String fieldName = findFieldNameFromContext(jpe);
-            String messageKey = getSyntaxErrorKey(jpe.getOriginalMessage());
+            String contextHint = findUserFriendlyContext(jpe);
+            String messageKey = determineErrorTypeKey(jpe.getOriginalMessage());
             
-            // Resolve the message from messages.properties using the key and fieldName
-            message = messageSource.getMessage(messageKey, new Object[]{fieldName}, Locale.getDefault());
-        } else {
-            message = "Invalid JSON format. Please check the request body.";
+            userFriendlyHint = messageSource.getMessage(
+                messageKey,
+                new Object[]{contextHint},
+                Locale.getDefault()
+            );
         }
 
+        // Create response with both the hint and the actual JSON they sent
         Map<String, Object> errorResponse = new HashMap<>();
-        errorResponse.put("message", message);
+        errorResponse.put("message", userFriendlyHint + "\n\nWhat you sent us:\n" + rawJsonInput);
+        
         return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
     }
 
-    // HANDLER 2: For data VALIDATION errors (from @Email, @NotNull, @Pattern, etc.)
+    /**
+     * Handles validation errors (when JSON is valid but data doesn't meet requirements)
+     */
     @Override
     protected ResponseEntity<Object> handleMethodArgumentNotValid(
-            MethodArgumentNotValidException ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
-        
+            MethodArgumentNotValidException ex,
+            HttpHeaders headers,
+            HttpStatus status,
+            WebRequest request) {
+
         Map<String, String> errors = new HashMap<>();
         ex.getBindingResult().getFieldErrors().forEach(error -> {
-            // error.getField() gives you the exact field name
-            // error.getDefaultMessage() gives you the message from ValidationMessages.properties
             errors.put(error.getField(), error.getDefaultMessage());
         });
         return new ResponseEntity<>(errors, HttpStatus.BAD_REQUEST);
     }
-    
-    // --- Helper Methods ---
 
-    private String getSyntaxErrorKey(String originalMessage) {
-        if (originalMessage.contains("was expecting comma")) {
-            return "json.syntax.error.missing.comma";
+    // -------------------- Helper Methods --------------------
+
+    /**
+     * Extracts the raw request body to show users what they actually sent
+     */
+    private String extractRequestBody() {
+        try {
+            // Try to get the raw body from the request
+            String body = StreamUtils.copyToString(
+                httpServletRequest.getInputStream(), 
+                StandardCharsets.UTF_8
+            );
+            return body.isEmpty() ? "(empty request)" : body;
+        } catch (Exception e) {
+            return "(unable to read request body)";
         }
-        if (originalMessage.contains("Unexpected end-of-input") && originalMessage.contains("Array")) {
-            return "json.syntax.error.unclosed.array";
-        }
-        if (originalMessage.contains("Unexpected end-of-input") && originalMessage.contains("Object")) {
-            return "json.syntax.error.unclosed.object";
-        }
-        return "json.syntax.error.generic"; // Default key
     }
 
-    private String findFieldNameFromContext(JsonParseException jpe) {
+    /**
+     * Finds a user-friendly context hint instead of technical field names
+     */
+    private String findUserFriendlyContext(JsonParseException jpe) {
         try {
             JsonStreamContext context = jpe.getProcessor().getParsingContext();
             if (context != null && context.getCurrentName() != null) {
-                return context.getCurrentName();
+                String fieldName = context.getCurrentName();
+                return getUserFriendlyFieldName(fieldName);
             }
-        } catch (IOException e) {
-            // ignore
+        } catch (IOException ignored) {
+            // If we can't get context, that's okay
         }
-        return "root object";
+        return "your request";
+    }
+
+    /**
+     * Converts technical field names to user-friendly descriptions
+     */
+    private String getUserFriendlyFieldName(String technicalName) {
+        switch (technicalName.toLowerCase()) {
+            case "toaddresses":
+                return "the email recipients list";
+            case "ccaddresses":
+                return "the CC recipients list";
+            case "receiverinfo":
+                return "the recipient information section";
+            case "fromaddress":
+                return "the sender email";
+            case "singleemail":
+                return "the single email setting";
+            case "sndcod":
+                return "the sender code";
+            default:
+                return "the '" + technicalName + "' section";
+        }
+    }
+
+    /**
+     * Determines which error message to show based on the parse error
+     */
+    private String determineErrorTypeKey(String originalMessage) {
+        if (originalMessage.contains("was expecting comma")) {
+            return "json.error.missing.comma";
+        }
+        if (originalMessage.contains("Unexpected end-of-input") && originalMessage.contains("Array")) {
+            return "json.error.unclosed.array";
+        }
+        if (originalMessage.contains("Unexpected end-of-input") && originalMessage.contains("Object")) {
+            return "json.error.unclosed.object";
+        }
+        if (originalMessage.contains("Unexpected character") && originalMessage.contains("was expecting")) {
+            return "json.error.unexpected.character";
+        }
+        return "json.error.general";
     }
 }
