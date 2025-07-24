@@ -1,25 +1,4 @@
-import org.springframework.stereotype.Component;
-import org.springframework.web.filter.OncePerRequestFilter;
-
-import javax.servlet.FilterChain;
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import org.springframework.web.util.ContentCachingRequestWrapper;
-import java.io.IOException;
-
-@Component
-public class RequestBodyCacheFilter extends OncePerRequestFilter {
-    @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
-            throws ServletException, IOException {
-        ContentCachingRequestWrapper wrappedRequest = new ContentCachingRequestWrapper(request);
-        filterChain.doFilter(wrappedRequest, response);
-    }
-}
-
-
-
+package com.socgen.sirocco.consumerapi.exceptions.handler;
 
 import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.core.JsonStreamContext;
@@ -29,15 +8,12 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
-import org.springframework.web.util.ContentCachingRequestWrapper;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -48,6 +24,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @Autowired
     private MessageSource messageSource;
 
+    // HANDLER 1: For JSON SYNTAX errors (e.g., missing comma, unclosed bracket)
     @Override
     protected ResponseEntity<Object> handleHttpMessageNotReadable(
             HttpMessageNotReadableException ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
@@ -55,44 +32,49 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         String message;
         Throwable cause = ex.getCause();
 
-        // 1. Get the request body (even for large/invalid JSONs)
-        String rawJsonInput = getRawRequestBody();
-        
         if (cause instanceof JsonParseException) {
             JsonParseException jpe = (JsonParseException) cause;
             String fieldName = findFieldNameFromContext(jpe);
-            
-            // 2. Get the generic error type: bracket, comma, etc.
             String messageKey = getSyntaxErrorKey(jpe.getOriginalMessage());
             
-            // 3. Friendly, non-technical message from messages.properties (with context)
-            message = messageSource.getMessage(
-                messageKey, 
-                new Object[]{fieldName},
-                Locale.getDefault()
-            );
+            // Resolve the message from messages.properties using the key and fieldName
+            message = messageSource.getMessage(messageKey, new Object[]{fieldName}, Locale.getDefault());
         } else {
-            message = "There is a format problem with your request. Please make sure you filled in all required details.";
+            message = "Invalid JSON format. Please check the request body.";
         }
 
         Map<String, Object> errorResponse = new HashMap<>();
-        errorResponse.put("message", message + "\n\nHere is what you entered:\n" + rawJsonInput);
-
+        errorResponse.put("message", message);
         return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
     }
 
-    private String getRawRequestBody() {
-        ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-        if(attrs != null) {
-            javax.servlet.http.HttpServletRequest request = attrs.getRequest();
-            if(request instanceof ContentCachingRequestWrapper) {
-                ContentCachingRequestWrapper wrapper = (ContentCachingRequestWrapper) request;
-                byte[] buf = wrapper.getContentAsByteArray();
-                if(buf.length > 0)
-                    return new String(buf, StandardCharsets.UTF_8);
-            }
+    // HANDLER 2: For data VALIDATION errors (from @Email, @NotNull, @Pattern, etc.)
+    @Override
+    protected ResponseEntity<Object> handleMethodArgumentNotValid(
+            MethodArgumentNotValidException ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
+        
+        Map<String, String> errors = new HashMap<>();
+        ex.getBindingResult().getFieldErrors().forEach(error -> {
+            // error.getField() gives you the exact field name
+            // error.getDefaultMessage() gives you the message from ValidationMessages.properties
+            errors.put(error.getField(), error.getDefaultMessage());
+        });
+        return new ResponseEntity<>(errors, HttpStatus.BAD_REQUEST);
+    }
+    
+    // --- Helper Methods ---
+
+    private String getSyntaxErrorKey(String originalMessage) {
+        if (originalMessage.contains("was expecting comma")) {
+            return "json.syntax.error.missing.comma";
         }
-        return "(unavailable)";
+        if (originalMessage.contains("Unexpected end-of-input") && originalMessage.contains("Array")) {
+            return "json.syntax.error.unclosed.array";
+        }
+        if (originalMessage.contains("Unexpected end-of-input") && originalMessage.contains("Object")) {
+            return "json.syntax.error.unclosed.object";
+        }
+        return "json.syntax.error.generic"; // Default key
     }
 
     private String findFieldNameFromContext(JsonParseException jpe) {
@@ -101,17 +83,9 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
             if (context != null && context.getCurrentName() != null) {
                 return context.getCurrentName();
             }
-        } catch (IOException ignored) {}
-        return "the affected section";
-    }
-
-    private String getSyntaxErrorKey(String originalMessage) {
-        if (originalMessage.contains("was expecting comma"))
-            return "json.syntax.error.missing.comma";
-        if (originalMessage.contains("Unexpected end-of-input") && originalMessage.contains("Array"))
-            return "json.syntax.error.unclosed.array";
-        if (originalMessage.contains("Unexpected end-of-input") && originalMessage.contains("Object"))
-            return "json.syntax.error.unclosed.object";
-        return "json.syntax.error.generic";
+        } catch (IOException e) {
+            // ignore
+        }
+        return "root object";
     }
 }
