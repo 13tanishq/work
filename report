@@ -1,10 +1,31 @@
+package com.socgen.sirocco.consumerapi.exceptions.handler;
+
+import com.fasterxml.jackson.core.JsonParseException;
+import com.fasterxml.jackson.core.JsonStreamContext;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.MessageSource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
+
+import java.io.IOException;
+import java.util.List;
+import java.util.Locale;
+import java.util.stream.Collectors;
+
 @RestControllerAdvice
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     @Autowired
     private MessageSource messageSource;
 
-    /* -------- 1. JSON syntax errors -------- */
+    // Handler 1: JSON syntax errors (malformed JSON)
     @Override
     protected ResponseEntity<Object> handleHttpMessageNotReadable(
             HttpMessageNotReadableException ex,
@@ -14,19 +35,21 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
         Throwable cause = ex.getCause();
         String field = "body";
-        String msg   = "Malformed JSON";
+        String message = "Malformed JSON";
 
         if (cause instanceof JsonParseException jpe) {
-            field = findFieldName(jpe);                 // "toAddresses", etc.
-            msg   = messageSource.getMessage(
-                       getSyntaxKey(jpe.getOriginalMessage()),
-                       null, Locale.getDefault());
+            field = findFieldNameFromContext(jpe);
+            message = messageSource.getMessage(
+                    getSyntaxErrorKey(jpe.getOriginalMessage()),
+                    null,
+                    Locale.getDefault());
         }
+
         return ResponseEntity.badRequest()
-                             .body(List.of(new Violation(field, msg)));
+                .body(List.of(new Violation(field, message)));
     }
 
-    /* -------- 2. Bean-validation errors -------- */
+    // Handler 2: Data validation errors (all bean validation failures)
     @Override
     protected ResponseEntity<Object> handleMethodArgumentNotValid(
             MethodArgumentNotValidException ex,
@@ -35,34 +58,45 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
             WebRequest request) {
 
         List<Violation> violations = ex.getBindingResult()
-                                       .getFieldErrors()          // keeps discovery order
-                                       .stream()
-                                       .map(err -> new Violation(
-                                               err.getField(),
-                                               err.getDefaultMessage()))
-                                       .collect(Collectors.toList());
+                .getFieldErrors()
+                .stream()
+                .map(error -> new Violation(
+                        error.getField(),
+                        error.getDefaultMessage()))
+                .collect(Collectors.toList());
 
         return ResponseEntity.badRequest().body(violations);
     }
 
-    /* ----- helpers ----- */
+    // Handler 3: Catch-all for any other unexpected exception (e.g., NullPointerException)
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<Object> handleAllOthers(Exception ex) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(List.of(new Violation("error", "An unexpected error occurred.")));
+    }
 
-    private String getSyntaxKey(String raw) {
-        if (raw.contains("was expecting comma"))           return "json.syntax.error.missing.comma";
-        if (raw.contains("Unexpected end-of-input") &&
-            raw.contains("Array"))                         return "json.syntax.error.unclosed.array";
-        if (raw.contains("Unexpected end-of-input") &&
-            raw.contains("Object"))                        return "json.syntax.error.unclosed.object";
+    // Helper: map Jackson syntax errors to keys for i18n-friendly messages
+    private String getSyntaxErrorKey(String originalMessage) {
+        if (originalMessage.contains("was expecting comma"))
+            return "json.syntax.error.missing.comma";
+        if (originalMessage.contains("Unexpected end-of-input") && originalMessage.contains("Array"))
+            return "json.syntax.error.unclosed.array";
+        if (originalMessage.contains("Unexpected end-of-input") && originalMessage.contains("Object"))
+            return "json.syntax.error.unclosed.object";
         return "json.syntax.error.generic";
     }
 
-    private String findFieldName(JsonParseException jpe) {
-        JsonStreamContext ctx = jpe.getProcessor().getParsingContext();
-        return (ctx != null && ctx.getCurrentName() != null)
-               ? ctx.getCurrentName()
-               : "body";
+    // Helper: find problematic field in JSON parsing context
+    private String findFieldNameFromContext(JsonParseException jpe) {
+        try {
+            JsonStreamContext ctx = jpe.getProcessor().getParsingContext();
+            if (ctx != null && ctx.getCurrentName() != null) {
+                return ctx.getCurrentName();
+            }
+        } catch (IOException ignored) {}
+        return "body";
     }
 
-    /* ----- tiny DTO for error items ----- */
+    // Simple DTO record for every error in the response array
     public record Violation(String field, String message) {}
 }
