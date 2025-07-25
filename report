@@ -1,91 +1,68 @@
-package com.socgen.sirocco.consumerapi.exceptions.handler;
-
-import com.fasterxml.jackson.core.JsonParseException;
-import com.fasterxml.jackson.core.JsonStreamContext;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.MessageSource;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.http.converter.HttpMessageNotReadableException;
-import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.web.context.request.WebRequest;
-import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
-
-import java.io.IOException;
-import java.util.HashMap;
-import java.util.Locale;
-import java.util.Map;
-
 @RestControllerAdvice
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     @Autowired
     private MessageSource messageSource;
 
-    // HANDLER 1: For JSON SYNTAX errors (e.g., missing comma, unclosed bracket)
+    /* -------- 1. JSON syntax errors -------- */
     @Override
     protected ResponseEntity<Object> handleHttpMessageNotReadable(
-            HttpMessageNotReadableException ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
+            HttpMessageNotReadableException ex,
+            HttpHeaders headers,
+            HttpStatus status,
+            WebRequest request) {
 
-        String message;
         Throwable cause = ex.getCause();
+        String field = "body";
+        String msg   = "Malformed JSON";
 
-        if (cause instanceof JsonParseException) {
-            JsonParseException jpe = (JsonParseException) cause;
-            String fieldName = findFieldNameFromContext(jpe);
-            String messageKey = getSyntaxErrorKey(jpe.getOriginalMessage());
-            
-            // Resolve the message from messages.properties using the key and fieldName
-            message = messageSource.getMessage(messageKey, new Object[]{fieldName}, Locale.getDefault());
-        } else {
-            message = "Invalid JSON format. Please check the request body.";
+        if (cause instanceof JsonParseException jpe) {
+            field = findFieldName(jpe);                 // "toAddresses", etc.
+            msg   = messageSource.getMessage(
+                       getSyntaxKey(jpe.getOriginalMessage()),
+                       null, Locale.getDefault());
         }
-
-        Map<String, Object> errorResponse = new HashMap<>();
-        errorResponse.put("message", message);
-        return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
+        return ResponseEntity.badRequest()
+                             .body(List.of(new Violation(field, msg)));
     }
 
-    // HANDLER 2: For data VALIDATION errors (from @Email, @NotNull, @Pattern, etc.)
+    /* -------- 2. Bean-validation errors -------- */
     @Override
     protected ResponseEntity<Object> handleMethodArgumentNotValid(
-            MethodArgumentNotValidException ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
-        
-        Map<String, String> errors = new HashMap<>();
-        ex.getBindingResult().getFieldErrors().forEach(error -> {
-            // error.getField() gives you the exact field name
-            // error.getDefaultMessage() gives you the message from ValidationMessages.properties
-            errors.put(error.getField(), error.getDefaultMessage());
-        });
-        return new ResponseEntity<>(errors, HttpStatus.BAD_REQUEST);
-    }
-    
-    // --- Helper Methods ---
+            MethodArgumentNotValidException ex,
+            HttpHeaders headers,
+            HttpStatus status,
+            WebRequest request) {
 
-    private String getSyntaxErrorKey(String originalMessage) {
-        if (originalMessage.contains("was expecting comma")) {
-            return "json.syntax.error.missing.comma";
-        }
-        if (originalMessage.contains("Unexpected end-of-input") && originalMessage.contains("Array")) {
-            return "json.syntax.error.unclosed.array";
-        }
-        if (originalMessage.contains("Unexpected end-of-input") && originalMessage.contains("Object")) {
-            return "json.syntax.error.unclosed.object";
-        }
-        return "json.syntax.error.generic"; // Default key
+        List<Violation> violations = ex.getBindingResult()
+                                       .getFieldErrors()          // keeps discovery order
+                                       .stream()
+                                       .map(err -> new Violation(
+                                               err.getField(),
+                                               err.getDefaultMessage()))
+                                       .collect(Collectors.toList());
+
+        return ResponseEntity.badRequest().body(violations);
     }
 
-    private String findFieldNameFromContext(JsonParseException jpe) {
-        try {
-            JsonStreamContext context = jpe.getProcessor().getParsingContext();
-            if (context != null && context.getCurrentName() != null) {
-                return context.getCurrentName();
-            }
-        } catch (IOException e) {
-            // ignore
-        }
-        return "root object";
+    /* ----- helpers ----- */
+
+    private String getSyntaxKey(String raw) {
+        if (raw.contains("was expecting comma"))           return "json.syntax.error.missing.comma";
+        if (raw.contains("Unexpected end-of-input") &&
+            raw.contains("Array"))                         return "json.syntax.error.unclosed.array";
+        if (raw.contains("Unexpected end-of-input") &&
+            raw.contains("Object"))                        return "json.syntax.error.unclosed.object";
+        return "json.syntax.error.generic";
     }
+
+    private String findFieldName(JsonParseException jpe) {
+        JsonStreamContext ctx = jpe.getProcessor().getParsingContext();
+        return (ctx != null && ctx.getCurrentName() != null)
+               ? ctx.getCurrentName()
+               : "body";
+    }
+
+    /* ----- tiny DTO for error items ----- */
+    public record Violation(String field, String message) {}
 }
