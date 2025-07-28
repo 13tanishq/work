@@ -1,23 +1,128 @@
-public class FieldNullPointerException extends RuntimeException {
-    private final String fieldName;
+package com.yourorg.common.exception;
 
-    public FieldNullPointerException(String fieldName, String message) {
-        super(message);
-        this.fieldName = fieldName;
+import com.fasterxml.jackson.core.JsonParseException;
+import com.fasterxml.jackson.core.JsonStreamContext;
+import org.springframework.context.MessageSource;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+
+import java.io.IOException;
+import java.util.List;
+import java.util.Locale;
+import java.util.stream.Collectors;
+
+public class ExceptionHandlingService {
+
+    private final MessageSource messageSource;
+
+    public ExceptionHandlingService(MessageSource messageSource) {
+        this.messageSource = messageSource;
     }
 
-    public String getFieldName() {
-        return fieldName;
+    public ResponseEntity<List<Violation>> handleHttpMessageNotReadable(HttpMessageNotReadableException ex) {
+        Throwable cause = ex.getCause();
+        String field = "body";
+        String message = "Malformed JSON";
+
+        if (cause instanceof JsonParseException jpe) {
+            field = findFieldNameFromContext(jpe);
+            message = messageSource.getMessage(
+                    getSyntaxErrorKey(jpe.getOriginalMessage()),
+                    null,
+                    Locale.getDefault());
+        }
+
+        return ResponseEntity.badRequest().body(List.of(new Violation(field, message)));
     }
+
+    public ResponseEntity<List<Violation>> handleMethodArgumentNotValid(MethodArgumentNotValidException ex) {
+        List<Violation> violations = ex.getBindingResult()
+                .getFieldErrors()
+                .stream()
+                .map(error -> new Violation(
+                        error.getField(),
+                        error.getDefaultMessage()))
+                .collect(Collectors.toList());
+
+        return ResponseEntity.badRequest().body(violations);
+    }
+
+    public ResponseEntity<List<Violation>> handleAllOthers(Exception ex) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(List.of(new Violation("error", "An unexpected error occurred.")));
+    }
+
+    private String getSyntaxErrorKey(String originalMessage) {
+        if (originalMessage.contains("was expecting comma"))
+            return "json.syntax.error.missing.comma";
+        if (originalMessage.contains("Unexpected end-of-input") && originalMessage.contains("Array"))
+            return "json.syntax.error.unclosed.array";
+        if (originalMessage.contains("Unexpected end-of-input") && originalMessage.contains("Object"))
+            return "json.syntax.error.unclosed.object";
+        return "json.syntax.error.generic";
+    }
+
+    private String findFieldNameFromContext(JsonParseException jpe) {
+        try {
+            JsonStreamContext ctx = jpe.getProcessor().getParsingContext();
+            if (ctx != null && ctx.getCurrentName() != null) {
+                return ctx.getCurrentName();
+            }
+        } catch (IOException ignored) {}
+        return "body";
+    }
+
+    public static record Violation(String field, String message) {}
 }
 
 
-if (object.getSomeField() == null) {
-    throw new FieldNullPointerException("someField", "Null value for 'someField'");
-}
 
-@ExceptionHandler(FieldNullPointerException.class)
-public ResponseEntity<Object> handleFieldNullPointer(FieldNullPointerException ex) {
-    Violation violation = new Violation(ex.getFieldName(), ex.getMessage());
-    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(List.of(violation));
+
+
+
+package com.yourorg.module.exceptions;
+
+import com.yourorg.common.exception.ExceptionHandlingService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
+
+// Only necessary to enable autowiring of ExceptionHandlingService
+@Import(ExceptionHandlingService.class)
+@RestControllerAdvice
+public class GlobalExceptionHandlerAdapter extends ResponseEntityExceptionHandler {
+
+    private final ExceptionHandlingService handlerService;
+
+    @Autowired
+    public GlobalExceptionHandlerAdapter(ExceptionHandlingService handlerService) {
+        this.handlerService = handlerService;
+    }
+
+    @Override
+    protected org.springframework.http.ResponseEntity<Object> handleHttpMessageNotReadable(
+            HttpMessageNotReadableException ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
+        return (ResponseEntity) handlerService.handleHttpMessageNotReadable(ex);
+    }
+
+    @Override
+    protected org.springframework.http.ResponseEntity<Object> handleMethodArgumentNotValid(
+            MethodArgumentNotValidException ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
+        return (ResponseEntity) handlerService.handleMethodArgumentNotValid(ex);
+    }
+
+    @ExceptionHandler(Exception.class)
+    public org.springframework.http.ResponseEntity<Object> handleAllOthers(Exception ex) {
+        return (ResponseEntity) handlerService.handleAllOthers(ex);
+    }
 }
