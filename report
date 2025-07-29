@@ -1,83 +1,170 @@
-package com.yourorg.common.exception;
+package com.yourorg.common.validation;
 
-import com.fasterxml.jackson.core.JsonParseException;
-import com.fasterxml.jackson.core.JsonStreamContext;
-import org.springframework.context.MessageSource;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.http.converter.HttpMessageNotReadableException;
-import org.springframework.validation.FieldError;
-import org.springframework.web.bind.MethodArgumentNotValidException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.InitializingBean;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.stereotype.Component;
+import org.yaml.snakeyaml.Yaml;
 
-import java.io.IOException;
-import java.util.List;
-import java.util.Locale;
-import java.util.stream.Collectors;
+import java.lang.reflect.Field;
+import java.util.*;
+import java.util.regex.Pattern;
 
-public class ExceptionHandlingService {
+@Component
+public class DynamicValidationService implements InitializingBean {
 
-    private final MessageSource messageSource;
+    private Map<String, Map<String, List<FieldRule>>> rulesByDto = new HashMap<>();
 
-    public ExceptionHandlingService(MessageSource messageSource) {
-        this.messageSource = messageSource;
+    @Override
+    public void afterPropertiesSet() throws Exception {
+        // Read YAML at startup
+        Yaml yaml = new Yaml();
+        try (var in = new ClassPathResource("field-validations.yml").getInputStream()) {
+            Map<String, Object> loaded = yaml.load(in);
+            for (var entry: loaded.entrySet()) {
+                String dtoName = entry.getKey();
+                Map<String, Object> fieldMap = (Map) entry.getValue();
+                Map<String, List<FieldRule>> rules = new HashMap<>();
+                for (Map.Entry<String, Object> fEntry : fieldMap.entrySet()) {
+                    String fieldName = fEntry.getKey();
+                    List<Object> rulesList = (List<Object>) fEntry.getValue();
+                    List<FieldRule> fieldRules = new ArrayList<>();
+                    for (Object obj : rulesList) {
+                        Map<String,Object> ruleMap = (Map<String,Object>)obj;
+                        fieldRules.add(FieldRule.from(ruleMap));
+                    }
+                    rules.put(fieldName, fieldRules);
+                }
+                rulesByDto.put(dtoName, rules);
+            }
+        }
     }
 
-    public ResponseEntity<List<Violation>> handleHttpMessageNotReadable(HttpMessageNotReadableException ex) {
-        Throwable cause = ex.getCause();
-        String field = "body";
-        String message = "Malformed JSON";
+    public List<Violation> validate(Object dto) {
+        List<Violation> result = new ArrayList<>();
+        String dtoSimpleName = dto.getClass().getSimpleName();
+        Map<String, List<FieldRule>> fieldRules = rulesByDto.get(dtoSimpleName);
+        if (fieldRules == null) return result; // No rules for this dto
 
-        if (cause instanceof JsonParseException jpe) {
-            field = findFieldNameFromContext(jpe);
-            message = messageSource.getMessage(
-                    getSyntaxErrorKey(jpe.getOriginalMessage()),
-                    null,
-                    Locale.getDefault());
+        for (Map.Entry<String, List<FieldRule>> fieldEntry : fieldRules.entrySet()) {
+            try {
+                String field = fieldEntry.getKey();
+                Field reflectField = dto.getClass().getDeclaredField(field);
+                reflectField.setAccessible(true);
+                Object valueObj = reflectField.get(dto);
+                String value = (valueObj == null) ? null : valueObj.toString();
+                for (FieldRule rule: fieldEntry.getValue()) {
+                    if (!rule.isValid(value)) {
+                        result.add(new Violation(field, rule.message));
+                        // If you want to only show the first violation per field, break;
+                    }
+                }
+            } catch (Exception e) {
+                // Can't find field, skip; or optionally, add as violation
+            }
+        }
+        return result;
+    }
+
+    static class FieldRule {
+        String type;
+        String message;
+        String pattern;
+        Integer min, max;
+
+        static FieldRule from(Map<String,Object> map) {
+            FieldRule r = new FieldRule();
+            r.type = (String) map.get("type");
+            r.message = (String) map.get("message");
+            r.pattern = (String) map.get("pattern");
+            if (map.get("min")!=null) r.min = (int) map.get("min");
+            if (map.get("max")!=null) r.max = (int) map.get("max");
+            return r;
         }
 
-        return ResponseEntity.badRequest().body(List.of(new Violation(field, message)));
-    }
-
-    public ResponseEntity<List<Violation>> handleMethodArgumentNotValid(MethodArgumentNotValidException ex) {
-        List<Violation> violations = ex.getBindingResult()
-                .getFieldErrors()
-                .stream()
-                .map(error -> new Violation(
-                        error.getField(),
-                        error.getDefaultMessage()))
-                .collect(Collectors.toList());
-
-        return ResponseEntity.badRequest().body(violations);
-    }
-
-    public ResponseEntity<List<Violation>> handleAllOthers(Exception ex) {
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(List.of(new Violation("error", "An unexpected error occurred.")));
-    }
-
-    private String getSyntaxErrorKey(String originalMessage) {
-        if (originalMessage.contains("was expecting comma"))
-            return "json.syntax.error.missing.comma";
-        if (originalMessage.contains("Unexpected end-of-input") && originalMessage.contains("Array"))
-            return "json.syntax.error.unclosed.array";
-        if (originalMessage.contains("Unexpected end-of-input") && originalMessage.contains("Object"))
-            return "json.syntax.error.unclosed.object";
-        return "json.syntax.error.generic";
-    }
-
-    private String findFieldNameFromContext(JsonParseException jpe) {
-        try {
-            JsonStreamContext ctx = jpe.getProcessor().getParsingContext();
-            if (ctx != null && ctx.getCurrentName() != null) {
-                return ctx.getCurrentName();
+        boolean isValid(String value) {
+            if ("required".equals(type)) return value != null && !value.isBlank();
+            if ("regex".equals(type)) return (value != null) && Pattern.matches(pattern, value);
+            if ("length".equals(type)) {
+                if (value == null) return false;
+                int len = value.length();
+                if (min != null && len < min) return false;
+                if (max != null && len > max) return false;
             }
-        } catch (IOException ignored) {}
-        return "body";
+            return true;
+        }
     }
 
-    public static record Violation(String field, String message) {}
+    public static class Violation {
+        public String field, message;
+        public Violation(String f, String m) { field = f; message = m; }
+    }
 }
 
+
+
+
+TsgdocsicDto:
+  sndcod:
+    - type: regex
+      pattern: '^[A-Z]{3}$'
+      message: 'sndcod must be exactly 3 uppercase letters'
+    - type: required
+      message: 'sndcod is required'
+  workspaceId:
+    - type: required
+      message: 'workspaceId is required'
+    - type: length
+      min: 3
+      max: 32
+      message: 'workspaceId must be between 3 and 32 characters'
+  modelId:
+    - type: required
+      message: 'modelId is required'
+  med:
+    - type: required
+      message: 'med is required'
+EmailDto:
+  fromAddress:
+    - type: regex
+      pattern: '^.+@.+\\..+$'
+      message: 'fromAddress must be a valid email'
+    - type: required
+      message: 'fromAddress is required'
+
+
+
+
+package com.yourorg.common.exception;
+
+import com.yourorg.common.validation.DynamicValidationService;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Component;
+import java.util.List;
+
+@Component
+public class ExceptionHandlingService {
+
+    private final DynamicValidationService validationService;
+
+    public ExceptionHandlingService(DynamicValidationService validationService) {
+        this.validationService = validationService;
+    }
+
+    public <T> ResponseEntity<List<DynamicValidationService.Violation>> validateOrFail(T dto) {
+        List<DynamicValidationService.Violation> errors = validationService.validate(dto);
+        if (!errors.isEmpty()) {
+            return ResponseEntity.badRequest().body(errors);
+        }
+        return null; // Null = no error, caller proceeds.
+    }
+
+    public ResponseEntity<List<DynamicValidationService.Violation>> handleAllOthers(Exception ex) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(List.of(new DynamicValidationService.Violation("error", "Unexpected error occurred.")));
+    }
+}
 
 
 
@@ -86,43 +173,44 @@ public class ExceptionHandlingService {
 package com.yourorg.module.exceptions;
 
 import com.yourorg.common.exception.ExceptionHandlingService;
+import com.yourorg.common.validation.DynamicValidationService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Import;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.converter.HttpMessageNotReadableException;
-import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.web.context.request.WebRequest;
-import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
+import org.springframework.http.ResponseEntity;
 
-// Only necessary to enable autowiring of ExceptionHandlingService
-@Import(ExceptionHandlingService.class)
-@RestControllerAdvice
-public class GlobalExceptionHandlerAdapter extends ResponseEntityExceptionHandler {
-
-    private final ExceptionHandlingService handlerService;
+@ControllerAdvice
+public class GlobalExceptionHandlerAdapter {
+    private final ExceptionHandlingService excService;
 
     @Autowired
-    public GlobalExceptionHandlerAdapter(ExceptionHandlingService handlerService) {
-        this.handlerService = handlerService;
-    }
-
-    @Override
-    protected org.springframework.http.ResponseEntity<Object> handleHttpMessageNotReadable(
-            HttpMessageNotReadableException ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
-        return (ResponseEntity) handlerService.handleHttpMessageNotReadable(ex);
-    }
-
-    @Override
-    protected org.springframework.http.ResponseEntity<Object> handleMethodArgumentNotValid(
-            MethodArgumentNotValidException ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
-        return (ResponseEntity) handlerService.handleMethodArgumentNotValid(ex);
+    public GlobalExceptionHandlerAdapter(ExceptionHandlingService service) {
+        this.excService = service;
     }
 
     @ExceptionHandler(Exception.class)
-    public org.springframework.http.ResponseEntity<Object> handleAllOthers(Exception ex) {
-        return (ResponseEntity) handlerService.handleAllOthers(ex);
+    public ResponseEntity<?> handleAll(Exception ex) {
+        return excService.handleAllOthers(ex);
+    }
+}
+
+
+
+@RestController
+public class TsgdocsicController {
+    private final ExceptionHandlingService validationService;
+
+    @Autowired
+    public TsgdocsicController(ExceptionHandlingService validationService) {
+        this.validationService = validationService;
+    }
+
+    @PostMapping("/doc")
+    public ResponseEntity<?> create(@RequestBody TsgdocsicDto dto) {
+        var violationsResp = validationService.validateOrFail(dto);
+        if (violationsResp != null) return violationsResp;
+
+        // (Proceed with business logic)
+        return ResponseEntity.ok("Success");
     }
 }
