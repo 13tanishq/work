@@ -1,82 +1,17 @@
-package com.yourorg.common.exception;
+@RestControllerAdvice
+public class GlobalExceptionHandlerAdapter extends ResponseEntityExceptionHandler {
+    @Autowired
+    private ExceptionHandlingService exceptionHandlingService;
 
-import com.fasterxml.jackson.core.JsonParseException;
-import com.fasterxml.jackson.core.JsonStreamContext;
-import com.yourorg.common.validation.DynamicValidationService;
-import org.springframework.context.MessageSource;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.http.converter.HttpMessageNotReadableException;
-
-import java.io.IOException;
-import java.util.List;
-import java.util.Locale;
-
-public class ExceptionHandlingService {
-
-    private final MessageSource messageSource;
-    private final DynamicValidationService validationService;
-
-    public ExceptionHandlingService(MessageSource messageSource, DynamicValidationService validationService) {
-        this.messageSource = messageSource;
-        this.validationService = validationService;
+    @Override
+    protected ResponseEntity<Object> handleHttpMessageNotReadable(
+            HttpMessageNotReadableException ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
+        // If you have the target DTO class, pass it; else, just null (will emit body-level message)
+        return (ResponseEntity) exceptionHandlingService.handleHttpMessageNotReadable(ex, null);
     }
 
-    /** 1. Handle malformed JSON/bad requests */
-    public ResponseEntity<List<Violation>> handleHttpMessageNotReadable(HttpMessageNotReadableException ex, Class<?> targetDtoClass) {
-        Throwable cause = ex.getCause();
-        String field = "body";
-        String message = "Malformed JSON";
-
-        if (cause instanceof JsonParseException jpe) {
-            field = findFieldNameFromContext(jpe);
-            message = messageSource.getMessage(
-                    getSyntaxErrorKey(jpe.getOriginalMessage()),
-                    null,
-                    Locale.getDefault());
-        }
-        // If the error is due to missing fields in the body (JSON parse ok but logical fields missing), handle via validateOrFail
-        // But in most cases, parsing error means the body was not mappable at all
-        return ResponseEntity.badRequest().body(List.of(new Violation(field, message)));
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<Object> handleAllOthers(Exception ex) {
+        return (ResponseEntity) exceptionHandlingService.handleAllOthers(ex);
     }
-
-    /** 2. THIS is now your universal field validation method (config-driven) */
-    public <T> ResponseEntity<List<Violation>> validateOrFail(T dto) {
-        // Defensive: handle missing/null DTO case
-        List<Violation> violations = validationService.validate(dto);
-        if (!violations.isEmpty()) {
-            return ResponseEntity.badRequest().body(violations);
-        }
-        return null;
-    }
-
-    /** 3. Unexpected errors (backstop) */
-    public ResponseEntity<List<Violation>> handleAllOthers(Exception ex) {
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(List.of(new Violation("error", "An unexpected error occurred.")));
-    }
-
-    // Helpers (same as before for JSON parsing)
-    private String getSyntaxErrorKey(String originalMessage) {
-        if (originalMessage.contains("was expecting comma"))
-            return "json.syntax.error.missing.comma";
-        if (originalMessage.contains("Unexpected end-of-input") && originalMessage.contains("Array"))
-            return "json.syntax.error.unclosed.array";
-        if (originalMessage.contains("Unexpected end-of-input") && originalMessage.contains("Object"))
-            return "json.syntax.error.unclosed.object";
-        return "json.syntax.error.generic";
-    }
-
-    private String findFieldNameFromContext(JsonParseException jpe) {
-        try {
-            JsonStreamContext ctx = jpe.getProcessor().getParsingContext();
-            if (ctx != null && ctx.getCurrentName() != null) {
-                return ctx.getCurrentName();
-            }
-        } catch (IOException ignored) {}
-        return "body";
-    }
-
-    /** Standard error record */
-    public static record Violation(String field, String message) {}
 }
