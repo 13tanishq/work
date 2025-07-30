@@ -1,216 +1,82 @@
-package com.yourorg.common.validation;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.beans.factory.InitializingBean;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.stereotype.Component;
-import org.yaml.snakeyaml.Yaml;
-
-import java.lang.reflect.Field;
-import java.util.*;
-import java.util.regex.Pattern;
-
-@Component
-public class DynamicValidationService implements InitializingBean {
-
-    private Map<String, Map<String, List<FieldRule>>> rulesByDto = new HashMap<>();
-
-    @Override
-    public void afterPropertiesSet() throws Exception {
-        // Read YAML at startup
-        Yaml yaml = new Yaml();
-        try (var in = new ClassPathResource("field-validations.yml").getInputStream()) {
-            Map<String, Object> loaded = yaml.load(in);
-            for (var entry: loaded.entrySet()) {
-                String dtoName = entry.getKey();
-                Map<String, Object> fieldMap = (Map) entry.getValue();
-                Map<String, List<FieldRule>> rules = new HashMap<>();
-                for (Map.Entry<String, Object> fEntry : fieldMap.entrySet()) {
-                    String fieldName = fEntry.getKey();
-                    List<Object> rulesList = (List<Object>) fEntry.getValue();
-                    List<FieldRule> fieldRules = new ArrayList<>();
-                    for (Object obj : rulesList) {
-                        Map<String,Object> ruleMap = (Map<String,Object>)obj;
-                        fieldRules.add(FieldRule.from(ruleMap));
-                    }
-                    rules.put(fieldName, fieldRules);
-                }
-                rulesByDto.put(dtoName, rules);
-            }
-        }
-    }
-
-    public List<Violation> validate(Object dto) {
-        List<Violation> result = new ArrayList<>();
-        String dtoSimpleName = dto.getClass().getSimpleName();
-        Map<String, List<FieldRule>> fieldRules = rulesByDto.get(dtoSimpleName);
-        if (fieldRules == null) return result; // No rules for this dto
-
-        for (Map.Entry<String, List<FieldRule>> fieldEntry : fieldRules.entrySet()) {
-            try {
-                String field = fieldEntry.getKey();
-                Field reflectField = dto.getClass().getDeclaredField(field);
-                reflectField.setAccessible(true);
-                Object valueObj = reflectField.get(dto);
-                String value = (valueObj == null) ? null : valueObj.toString();
-                for (FieldRule rule: fieldEntry.getValue()) {
-                    if (!rule.isValid(value)) {
-                        result.add(new Violation(field, rule.message));
-                        // If you want to only show the first violation per field, break;
-                    }
-                }
-            } catch (Exception e) {
-                // Can't find field, skip; or optionally, add as violation
-            }
-        }
-        return result;
-    }
-
-    static class FieldRule {
-        String type;
-        String message;
-        String pattern;
-        Integer min, max;
-
-        static FieldRule from(Map<String,Object> map) {
-            FieldRule r = new FieldRule();
-            r.type = (String) map.get("type");
-            r.message = (String) map.get("message");
-            r.pattern = (String) map.get("pattern");
-            if (map.get("min")!=null) r.min = (int) map.get("min");
-            if (map.get("max")!=null) r.max = (int) map.get("max");
-            return r;
-        }
-
-        boolean isValid(String value) {
-            if ("required".equals(type)) return value != null && !value.isBlank();
-            if ("regex".equals(type)) return (value != null) && Pattern.matches(pattern, value);
-            if ("length".equals(type)) {
-                if (value == null) return false;
-                int len = value.length();
-                if (min != null && len < min) return false;
-                if (max != null && len > max) return false;
-            }
-            return true;
-        }
-    }
-
-    public static class Violation {
-        public String field, message;
-        public Violation(String f, String m) { field = f; message = m; }
-    }
-}
-
-
-
-
-TsgdocsicDto:
-  sndcod:
-    - type: regex
-      pattern: '^[A-Z]{3}$'
-      message: 'sndcod must be exactly 3 uppercase letters'
-    - type: required
-      message: 'sndcod is required'
-  workspaceId:
-    - type: required
-      message: 'workspaceId is required'
-    - type: length
-      min: 3
-      max: 32
-      message: 'workspaceId must be between 3 and 32 characters'
-  modelId:
-    - type: required
-      message: 'modelId is required'
-  med:
-    - type: required
-      message: 'med is required'
-EmailDto:
-  fromAddress:
-    - type: regex
-      pattern: '^.+@.+\\..+$'
-      message: 'fromAddress must be a valid email'
-    - type: required
-      message: 'fromAddress is required'
-
-
-
-
 package com.yourorg.common.exception;
 
+import com.fasterxml.jackson.core.JsonParseException;
+import com.fasterxml.jackson.core.JsonStreamContext;
 import com.yourorg.common.validation.DynamicValidationService;
+import org.springframework.context.MessageSource;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.stereotype.Component;
-import java.util.List;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 
-@Component
+import java.io.IOException;
+import java.util.List;
+import java.util.Locale;
+
 public class ExceptionHandlingService {
 
+    private final MessageSource messageSource;
     private final DynamicValidationService validationService;
 
-    public ExceptionHandlingService(DynamicValidationService validationService) {
+    public ExceptionHandlingService(MessageSource messageSource, DynamicValidationService validationService) {
+        this.messageSource = messageSource;
         this.validationService = validationService;
     }
 
-    public <T> ResponseEntity<List<DynamicValidationService.Violation>> validateOrFail(T dto) {
-        List<DynamicValidationService.Violation> errors = validationService.validate(dto);
-        if (!errors.isEmpty()) {
-            return ResponseEntity.badRequest().body(errors);
+    /** 1. Handle malformed JSON/bad requests */
+    public ResponseEntity<List<Violation>> handleHttpMessageNotReadable(HttpMessageNotReadableException ex, Class<?> targetDtoClass) {
+        Throwable cause = ex.getCause();
+        String field = "body";
+        String message = "Malformed JSON";
+
+        if (cause instanceof JsonParseException jpe) {
+            field = findFieldNameFromContext(jpe);
+            message = messageSource.getMessage(
+                    getSyntaxErrorKey(jpe.getOriginalMessage()),
+                    null,
+                    Locale.getDefault());
         }
-        return null; // Null = no error, caller proceeds.
+        // If the error is due to missing fields in the body (JSON parse ok but logical fields missing), handle via validateOrFail
+        // But in most cases, parsing error means the body was not mappable at all
+        return ResponseEntity.badRequest().body(List.of(new Violation(field, message)));
     }
 
-    public ResponseEntity<List<DynamicValidationService.Violation>> handleAllOthers(Exception ex) {
+    /** 2. THIS is now your universal field validation method (config-driven) */
+    public <T> ResponseEntity<List<Violation>> validateOrFail(T dto) {
+        // Defensive: handle missing/null DTO case
+        List<Violation> violations = validationService.validate(dto);
+        if (!violations.isEmpty()) {
+            return ResponseEntity.badRequest().body(violations);
+        }
+        return null;
+    }
+
+    /** 3. Unexpected errors (backstop) */
+    public ResponseEntity<List<Violation>> handleAllOthers(Exception ex) {
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(List.of(new DynamicValidationService.Violation("error", "Unexpected error occurred.")));
-    }
-}
-
-
-
-
-
-package com.yourorg.module.exceptions;
-
-import com.yourorg.common.exception.ExceptionHandlingService;
-import com.yourorg.common.validation.DynamicValidationService;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.ControllerAdvice;
-import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.http.ResponseEntity;
-
-@ControllerAdvice
-public class GlobalExceptionHandlerAdapter {
-    private final ExceptionHandlingService excService;
-
-    @Autowired
-    public GlobalExceptionHandlerAdapter(ExceptionHandlingService service) {
-        this.excService = service;
+                .body(List.of(new Violation("error", "An unexpected error occurred.")));
     }
 
-    @ExceptionHandler(Exception.class)
-    public ResponseEntity<?> handleAll(Exception ex) {
-        return excService.handleAllOthers(ex);
-    }
-}
-
-
-
-@RestController
-public class TsgdocsicController {
-    private final ExceptionHandlingService validationService;
-
-    @Autowired
-    public TsgdocsicController(ExceptionHandlingService validationService) {
-        this.validationService = validationService;
+    // Helpers (same as before for JSON parsing)
+    private String getSyntaxErrorKey(String originalMessage) {
+        if (originalMessage.contains("was expecting comma"))
+            return "json.syntax.error.missing.comma";
+        if (originalMessage.contains("Unexpected end-of-input") && originalMessage.contains("Array"))
+            return "json.syntax.error.unclosed.array";
+        if (originalMessage.contains("Unexpected end-of-input") && originalMessage.contains("Object"))
+            return "json.syntax.error.unclosed.object";
+        return "json.syntax.error.generic";
     }
 
-    @PostMapping("/doc")
-    public ResponseEntity<?> create(@RequestBody TsgdocsicDto dto) {
-        var violationsResp = validationService.validateOrFail(dto);
-        if (violationsResp != null) return violationsResp;
-
-        // (Proceed with business logic)
-        return ResponseEntity.ok("Success");
+    private String findFieldNameFromContext(JsonParseException jpe) {
+        try {
+            JsonStreamContext ctx = jpe.getProcessor().getParsingContext();
+            if (ctx != null && ctx.getCurrentName() != null) {
+                return ctx.getCurrentName();
+            }
+        } catch (IOException ignored) {}
+        return "body";
     }
+
+    /** Standard error record */
+    public static record Violation(String field, String message) {}
 }
