@@ -1,208 +1,38 @@
-import com.fasterxml.jackson.databind.ObjectMapper; // <-- Import ObjectMapper
-import org.springframework.beans.factory.annotation.Autowired; // For DI
-// ... other imports
-
-@RestController
-@RequestMapping("/api/v1/requests")
-public class ConsumerController {
-
-    @Autowired
-    private ValidationService validationService; // Assuming you inject your service
-
-    @Autowired
-    private ObjectMapper objectMapper; // Inject the ObjectMapper
-
-    // ... your existing ApiOperation, etc. annotations
-    @PostMapping
-    @ApiOperation(value = "...", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
-    // ... all your @ApiResponse annotations
-    public ResponseEntity<?> processDocument(
-            @RequestParam(value = "type") String type,
-            @RequestBody Map<String, Object> requestPayload) { // <-- Accept a generic Map
-
-        // This object will hold our specific request type (Email, Invoice, etc.)
-        Object specificRequest;
-
-        // Use the 'type' parameter to determine the target class
-        try {
-            switch (type.toUpperCase()) {
-                case "EMAIL":
-                    specificRequest = objectMapper.convertValue(requestPayload, EmailRequest.class);
-                    break;
-                case "INVOICE":
-                    specificRequest = objectMapper.convertValue(requestPayload, InvoiceRequest.class);
-                    break;
-                case "FTP":
-                    specificRequest = objectMapper.convertValue(requestPayload, FtpRequest.class);
-                    break;
-                // Add other cases for MAILING, FAX, etc.
-                // case "MAILING":
-                //     specificRequest = objectMapper.convertValue(requestPayload, MailingRequest.class);
-                //     break;
-                default:
-                    // Handle unknown type
-                    throw new UnsupportedOperationException("Request type '" + type + "' is not supported.");
+private List<Object> getAllFieldValues(Object root, String fieldPath) throws Exception {
+    String[] fields = fieldPath.split("\\.");
+    List<Object> currentObjs = Collections.singletonList(root);
+    for (String f : fields) {
+        List<Object> nextObjs = new ArrayList<>();
+        for (Object obj : currentObjs) {
+            if (obj == null) continue;
+            Field field = findField(obj.getClass(), f); // should support superclasses
+            if (field == null) continue;
+            field.setAccessible(true);
+            Object value = field.get(obj);
+            if (value instanceof Collection<?>) {
+                nextObjs.addAll((Collection<?>) value);
+            } else {
+                nextObjs.add(value);
             }
-
-            // Now, validate the strongly-typed object
-            // Your validation service should be able to handle a generic Object
-            // and use the annotations on the passed instance (EmailRequest, InvoiceRequest, etc.)
-            validationService.validateOrfail(specificRequest);
-
-            // ... your existing logic continues here ...
-            // You might need to cast 'specificRequest' back to its type if you need
-            // to access specific fields later in this method.
-
-            // Example:
-            // if (specificRequest instanceof EmailRequest) {
-            //     EmailRequest emailRequest = (EmailRequest) specificRequest;
-            //     // do something with emailRequest
-            // }
-
-            // ... your try/catch for the business logic ...
-            return ResponseEntity.ok("Successfully processed " + type + " request.");
-
-
-        } catch (IllegalArgumentException e) {
-            // This catches errors from objectMapper.convertValue if fields don't match
-            // and also the UnsupportedOperationException we threw.
-            return ResponseEntity.badRequest().body("Invalid request payload for type '" + type + "'. " + e.getMessage());
         }
-        // Your existing exception handling for validation errors should catch the
-        // exception thrown by validationService.validateOrfail()
+        currentObjs = nextObjs;
     }
+    return currentObjs;
 }
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// Make sure these imports are present
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
-import java.util.Map;
-// ... your other existing imports
-
-@RestController
-// ... (your existing class-level annotations)
-public class ConsumerController {
-
-    // <<< ADDED: Inject the ObjectMapper for JSON conversion
-    @Autowired
-    private ObjectMapper objectMapper;
-
-    // <<< KEPT: Your existing service dependency
-    @Autowired
-    private ValidationService validationService;
-
-    // ... (any other class members)
-
-    // The annotations for the endpoint remain the same
-    @PostMapping(value = "...", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
-    @ApiOperation(...)
-    @ApiResponses({ ... })
-    public ResponseEntity<?> processDocument(
-            // <<< CHANGED: No longer hardcoded to EmailRequest. The @Parameter annotation can also be updated
-            // to better reflect this generic nature if your Swagger version supports it.
-            @RequestBody Map<String, Object> requestPayload,
-
-            // <<< KEPT: The type parameter is still the key to our logic
-            @RequestParam(value = "type") String type) {
-
-        Object specificRequest; // This will hold the properly typed request object
-
-        try {
-            // <<< ADDED: This block is the core of the new solution.
-            // It replaces the direct use of a hardcoded request object.
-            switch (type.toUpperCase()) {
-                case "EMAIL":
-                    specificRequest = objectMapper.convertValue(requestPayload, EmailRequest.class);
-                    break;
-                case "INVOICE":
-                    // Assuming you have an InvoiceRequest.class
-                    specificRequest = objectMapper.convertValue(requestPayload, InvoiceRequest.class);
-                    break;
-                case "FTP":
-                     // Assuming you have an FtpRequest.class
-                    specificRequest = objectMapper.convertValue(requestPayload, FtpRequest.class);
-                    break;
-                // ... add cases for MAILING, FAX, API etc.
-                default:
-                    throw new UnsupportedOperationException("Request type '" + type + "' is not supported.");
+for (var fieldEntry : fieldRules.entrySet()) {
+    try {
+        String field = fieldEntry.getKey();
+        List<Object> values = getAllFieldValues(dto, field);
+        for (Object valueObj : values) {
+            String value = (valueObj == null) ? null : valueObj.toString();
+            for (FieldRule rule : fieldEntry.getValue()) {
+                if (!rule.isValid(value)) {
+                    result.add(new Violation(field, rule.message));
+                }
             }
-
-            // <<< ADDED: Perform validation on the newly created, specific request object.
-            // This will throw an exception if validation fails, which your handler will catch.
-            validationService.validateOrfail(specificRequest);
-
-        } catch (Exception e) {
-            // This will catch deserialization errors or validation exceptions
-            // You might want to refine this block to return a specific error format
-            // For now, re-throwing or letting your global handler manage it is fine.
-            // Your existing @ApiResponse for 400 will be triggered by this.
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid request: " + e.getMessage(), e);
         }
-
-        // <<< KEPT: Your existing logging and business logic try-finally block
-        try {
-            // Your MDC logic is preserved
-            MDC.put(Constants.LOGGING_TRACKER_ID, klastiqa.MDC.getSpanId()); // Example
-            log.info("ConsumerController -> processDocument >> Process Started");
-
-            // <<< CHANGED: Pass the new 'specificRequest' object to your business logic method
-            // instead of the old 'emailRequest' or 'request' variable.
-            return processDocumentResponse(specificRequest, type);
-
-        } finally {
-            log.info("ConsumerController -> processDocument >> Process Completed");
-            String id = MDC.get(Constants.LOGGING_TRACKER_ID);
-            
-            // <<< ATTENTION: Your original code had 'if (email != null)'. You'll need
-            // to check if this logic is still needed and adapt it for the generic 'specificRequest'
-            // For example: if (specificRequest instanceof EmailRequest) { ... }
-            
-            MDC.remove(Constants.LOGGING_TRACKER_ID);
-        }
-    }
-
-    /**
-     * IMPORTANT: You will likely need to update the signature of your helper method
-     * from: private ResponseEntity<?> processDocumentResponse(EmailRequest request, String type)
-     * to:   private ResponseEntity<?> processDocumentResponse(Object request, String type)
-     *
-     * Inside this method, you will need to use 'instanceof' to cast the object
-     * back to its specific type to access its fields.
-     */
-    private ResponseEntity<?> processDocumentResponse(Object request, String type) {
-        // Example of how to use the object inside this method:
-        if (request instanceof EmailRequest) {
-            EmailRequest emailRequest = (EmailRequest) request;
-            // Now you can use emailRequest.getFromAddress(), etc.
-        } else if (request instanceof InvoiceRequest) {
-            InvoiceRequest invoiceRequest = (InvoiceRequest) request;
-            // Now you can use invoiceRequest.getInvoiceNumber(), etc.
-        }
-
-        // ... rest of your business logic
-        return ResponseEntity.ok().build(); // Placeholder
-    }
-
-    // ... rest of your controller class
+    } catch (Exception ignored) {}
 }
