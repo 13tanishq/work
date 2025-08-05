@@ -36,3 +36,31 @@ for (var fieldEntry : fieldRules.entrySet()) {
         }
     } catch (Exception ignored) {}
 }
+
+
+
+
+package com.socgen.sirocco.consumerapi.model.request;
+
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+
+// ... other imports
+
+@JsonTypeInfo(
+    use = JsonTypeInfo.Id.NAME,
+    include = JsonTypeInfo.As.PROPERTY,
+    property = "type" // Each payload must include "type": "email", etc.
+)
+@JsonSubTypes({
+    @JsonSubTypes.Type(value = EmailRequest.class, name = "email"),
+    @JsonSubTypes.Type(value = ApiRequest.class, name = "api"),
+    @JsonSubTypes.Type(value = FaxRequest.class, name = "fax"),
+    @JsonSubTypes.Type(value = FTPRequest.class, name = "ftp"),
+    @JsonSubTypes.Type(value = InvoiceRequest.class, name = "invoice"),
+    @JsonSubTypes.Type(value = MailingRequest.class, name = "mailing"),
+    // ...add other subclasses here
+})
+public class Request {
+    // your fields (such as sndcod), getters, setters, etc.
+}
