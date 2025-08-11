@@ -1,66 +1,71 @@
-private List<Object> getAllFieldValues(Object root, String fieldPath) throws Exception {
-    String[] fields = fieldPath.split("\\.");
-    List<Object> currentObjs = Collections.singletonList(root);
-    for (String f : fields) {
-        List<Object> nextObjs = new ArrayList<>();
-        for (Object obj : currentObjs) {
-            if (obj == null) continue;
-            Field field = findField(obj.getClass(), f); // should support superclasses
-            if (field == null) continue;
-            field.setAccessible(true);
-            Object value = field.get(obj);
-            if (value instanceof Collection<?>) {
-                nextObjs.addAll((Collection<?>) value);
-            } else {
-                nextObjs.add(value);
-            }
+// EmailRequest and other DTOs must have setters/getters!
+
+@SpringBootTest
+@AutoConfigureMockMvc
+public class ConsumerControllerValidationTests {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Test
+    public void testValidEmailRequestPassesValidation() throws Exception {
+        String validJson = """
+        {
+          "fromAddress": "sender@test.com",
+          "receiverInfo": {
+            "toAddresses": ["recipient@test.com"]
+          },
+          "data": {
+           "body": "Hello, world!",
+           "subject": "Test subject"
+          },
+          "sndcod": "ABC"
         }
-        currentObjs = nextObjs;
+        """;
+
+        mockMvc.perform(post("/api/v1/requests/email")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(validJson))
+                .andExpect(status().isOk());
     }
-    return currentObjs;
-}
 
-
-
-for (var fieldEntry : fieldRules.entrySet()) {
-    try {
-        String field = fieldEntry.getKey();
-        List<Object> values = getAllFieldValues(dto, field);
-        for (Object valueObj : values) {
-            String value = (valueObj == null) ? null : valueObj.toString();
-            for (FieldRule rule : fieldEntry.getValue()) {
-                if (!rule.isValid(value)) {
-                    result.add(new Violation(field, rule.message));
-                }
-            }
+    @Test
+    public void testMissingSndCodFailsValidation() throws Exception {
+        String invalidJson = """
+        {
+          "fromAddress": "sender@test.com",
+          "receiverInfo": {
+            "toAddresses": ["recipient@test.com"]
+          },
+          "data": {
+           "body": "Hello, world!",
+           "subject": "Test subject"
+          }
+          // 'sndcod' missing!
         }
-    } catch (Exception ignored) {}
-}
+        """;
 
+        mockMvc.perform(post("/api/v1/requests/email")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(invalidJson))
+                .andExpect(status().isBadRequest()) // 400 error
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("sndcod")));
+    }
 
+    @Test
+    public void testMalformedJsonTriggersExceptionHandler() throws Exception {
+        String malformedJson = """
+        {
+          "fromAddress": "sender@test.com"
+        // missing closing braces and quotes!
+        """;
 
+        mockMvc.perform(post("/api/v1/requests/email")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(malformedJson))
+                .andExpect(status().isBadRequest()) // or .isInternalServerError depending on setup
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("Malformed JSON")));
+    }
 
-package com.socgen.sirocco.consumerapi.model.request;
-
-import com.fasterxml.jackson.annotation.JsonTypeInfo;
-import com.fasterxml.jackson.annotation.JsonSubTypes;
-
-// ... other imports
-
-@JsonTypeInfo(
-    use = JsonTypeInfo.Id.NAME,
-    include = JsonTypeInfo.As.PROPERTY,
-    property = "type" // Each payload must include "type": "email", etc.
-)
-@JsonSubTypes({
-    @JsonSubTypes.Type(value = EmailRequest.class, name = "email"),
-    @JsonSubTypes.Type(value = ApiRequest.class, name = "api"),
-    @JsonSubTypes.Type(value = FaxRequest.class, name = "fax"),
-    @JsonSubTypes.Type(value = FTPRequest.class, name = "ftp"),
-    @JsonSubTypes.Type(value = InvoiceRequest.class, name = "invoice"),
-    @JsonSubTypes.Type(value = MailingRequest.class, name = "mailing"),
-    // ...add other subclasses here
-})
-public class Request {
-    // your fields (such as sndcod), getters, setters, etc.
+    // Add further tests for different DTOs/endpoints as needed
 }
