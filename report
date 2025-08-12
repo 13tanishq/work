@@ -82,3 +82,118 @@ void valid_shouldPass() {
         System.out.println(resp.getBody());
     }
 }
+
+
+
+
+
+
+
+@Autowired
+private ExceptionHandlingService validationService;
+
+// Build ONLY the fields covered by your config
+private EmailRequest buildInvalidForConfig() {
+    EmailRequest req = new EmailRequest();
+
+    // fromAddress (in config) -> make invalid (empty) to trigger regex/required
+    req.setFromAddress("");
+
+    // receiverInfo.toAddresses (in config) -> include one invalid
+    ReceiverInfo ri = new ReceiverInfo();
+    ri.setToAddresses(List.of("not-an-email"));
+    req.setReceiverInfo(ri);
+
+    // data.emailSignature (in config) -> required, set empty/missing
+    Data data = new Data();
+    data.setEmailSignature(""); // to trigger required
+    // data.attachments.sgDocsVersion (in config) -> required
+    // data.attachments.documentName (in config) -> must end with .pdf
+    // data.attachments.documentType (in config) -> required
+    List<Attachment> atts = new ArrayList<>();
+    Attachment att = new Attachment();
+    att.setSgDocsVersion("");            // invalid (required)
+    att.setDocumentName("invoice.txt");  // invalid (must match ^.+\\.pdf$)
+    att.setDocumentType("");             // invalid (required)
+    atts.add(att);
+    data.setAttachments(atts);
+
+    req.setData(data);
+
+    // sndcod (in config) -> must be exactly 3 uppercase letters; make invalid
+    req.setSndcod("ab1");
+
+    return req;
+}
+
+private EmailRequest buildValidForConfig() {
+    EmailRequest req = new EmailRequest();
+
+    req.setFromAddress("sender@test.com");
+
+    ReceiverInfo ri = new ReceiverInfo();
+    ri.setToAddresses(List.of("recipient@test.com"));
+    req.setReceiverInfo(ri);
+
+    Data data = new Data();
+    data.setEmailSignature("SIG1");
+
+    List<Attachment> atts = new ArrayList<>();
+    Attachment att = new Attachment();
+    att.setSgDocsVersion("v2");          // as per image (v2/v3)
+    att.setDocumentName("invoice.pdf");  // matches ^.+\.pdf$
+    att.setDocumentType("PDF");          // present
+    atts.add(att);
+    data.setAttachments(atts);
+
+    req.setData(data);
+
+    req.setSndcod("ABC"); // matches ^[A-Z]{3}$
+
+    return req;
+}
+
+@Test
+void invalid_shouldPrintConfigViolations() {
+    EmailRequest req = buildInvalidForConfig();
+
+    ResponseEntity<?> resp = validationService.validateOrFail(req);
+
+    if (resp == null) {
+        System.out.println("FAIL: expected violations but got none");
+        return;
+    }
+
+    System.out.println("STATUS: " + resp.getStatusCode());
+    Object body = resp.getBody();
+    if (body instanceof List<?> list) {
+        System.out.println("Violations:");
+        for (Object v : list) {
+            try {
+                var gf = v.getClass().getMethod("getField");
+                var gm = v.getClass().getMethod("getMessage");
+                Object field = gf.invoke(v);
+                Object msg = gm.invoke(v);
+                System.out.println("- " + field + ": " + msg);
+            } catch (Exception e) {
+                System.out.println("- " + v);
+            }
+        }
+    } else {
+        System.out.println("Body: " + body);
+    }
+}
+
+@Test
+void valid_shouldPass() {
+    EmailRequest req = buildValidForConfig();
+
+    ResponseEntity<?> resp = validationService.validateOrFail(req);
+
+    if (resp == null) {
+        System.out.println("PASS: no violations");
+    } else {
+        System.out.println("FAIL: unexpected violations, status=" + resp.getStatusCode());
+        System.out.println(resp.getBody());
+    }
+}
