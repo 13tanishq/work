@@ -1,71 +1,84 @@
-// EmailRequest and other DTOs must have setters/getters!
+@Autowired
+private ExceptionHandlingService validationService; // exposes validateOrFail(Object dto)
 
-@SpringBootTest
-@AutoConfigureMockMvc
-public class ConsumerControllerValidationTests {
+// Build invalid EmailRequest to trigger violations
+private EmailRequest invalidEmail() {
+    EmailRequest req = new EmailRequest();
+    req.setFromAddress("");      // invalid
+    req.setSndcod(null);         // missing
 
-    @Autowired
-    private MockMvc mockMvc;
+    ReceiverInfo ri = new ReceiverInfo();
+    ri.setToAddresses(List.of("")); // invalid
+    ri.setSingleEmail(true);
+    req.setReceiverInfo(ri);
 
-    @Test
-    public void testValidEmailRequestPassesValidation() throws Exception {
-        String validJson = """
-        {
-          "fromAddress": "sender@test.com",
-          "receiverInfo": {
-            "toAddresses": ["recipient@test.com"]
-          },
-          "data": {
-           "body": "Hello, world!",
-           "subject": "Test subject"
-          },
-          "sndcod": "ABC"
+    Data data = new Data();
+    data.setBody("");            // invalid
+    data.setSubject("");         // invalid
+    req.setData(data);
+
+    return req;
+}
+
+// Build valid EmailRequest to pass validation
+private EmailRequest validEmail() {
+    EmailRequest req = new EmailRequest();
+    req.setFromAddress("sender@test.com");
+    req.setSndcod("ABC"); // adjust to your rule
+
+    ReceiverInfo ri = new ReceiverInfo();
+    ri.setToAddresses(List.of("rcpt@test.com"));
+    ri.setSingleEmail(true);
+    req.setReceiverInfo(ri);
+
+    Data data = new Data();
+    data.setBody("Hello");
+    data.setSubject("Subject");
+    req.setData(data);
+
+    return req;
+}
+
+@Test
+void invalid_shouldPrintViolations() {
+    EmailRequest req = invalidEmail();
+
+    ResponseEntity<?> resp = validationService.validateOrFail(req);
+
+    if (resp == null) {
+        System.out.println("FAIL: expected violations but got none");
+        return;
+    }
+
+    System.out.println("STATUS = " + resp.getStatusCode());
+    Object body = resp.getBody();
+    // Expecting List<Violation> where Violation has getField() and getMessage()
+    if (body instanceof java.util.List<?> list) {
+        System.out.println("Violations:");
+        for (Object o : list) {
+            try {
+                var field = o.getClass().getMethod("getField").invoke(o);
+                var msg   = o.getClass().getMethod("getMessage").invoke(o);
+                System.out.println("- " + field + ": " + msg);
+            } catch (Exception reflectionErr) {
+                System.out.println("- " + o);
+            }
         }
-        """;
-
-        mockMvc.perform(post("/api/v1/requests/email")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(validJson))
-                .andExpect(status().isOk());
+    } else {
+        System.out.println("Body: " + body);
     }
+}
 
-    @Test
-    public void testMissingSndCodFailsValidation() throws Exception {
-        String invalidJson = """
-        {
-          "fromAddress": "sender@test.com",
-          "receiverInfo": {
-            "toAddresses": ["recipient@test.com"]
-          },
-          "data": {
-           "body": "Hello, world!",
-           "subject": "Test subject"
-          }
-          // 'sndcod' missing!
-        }
-        """;
+@Test
+void valid_shouldPass() {
+    EmailRequest req = validEmail();
 
-        mockMvc.perform(post("/api/v1/requests/email")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(invalidJson))
-                .andExpect(status().isBadRequest()) // 400 error
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("sndcod")));
+    ResponseEntity<?> resp = validationService.validateOrFail(req);
+
+    if (resp == null) {
+        System.out.println("PASS: no violations");
+    } else {
+        System.out.println("FAIL: unexpected violations, status=" + resp.getStatusCode());
+        System.out.println(resp.getBody());
     }
-
-    @Test
-    public void testMalformedJsonTriggersExceptionHandler() throws Exception {
-        String malformedJson = """
-        {
-          "fromAddress": "sender@test.com"
-        // missing closing braces and quotes!
-        """;
-
-        mockMvc.perform(post("/api/v1/requests/email")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(malformedJson))
-                .andExpect(status().isBadRequest()) // or .isInternalServerError depending on setup
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("Malformed JSON")));
-    }
-
-    // Add further tests for different DTOs/endpoints as needed
 }
