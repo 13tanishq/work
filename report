@@ -1,199 +1,56 @@
-@Autowired
-private ExceptionHandlingService validationService; // exposes validateOrFail(Object dto)
+@Override
+public Integer updateNotificationStatuses(ResendNotificationRequest resendNotificationRequest)
+        throws NoDocumentException, ApiBadRequestException { // Added ApiBadRequestException
 
-// Build invalid EmailRequest to trigger violations
-private EmailRequest invalidEmail() {
-    EmailRequest req = new EmailRequest();
-    req.setFromAddress("");      // invalid
-    req.setSndcod(null);         // missing
+    // 1. Get all mandatory parameters from the request
+    String sndcod = resendNotificationRequest.getSndcod();
+    List<String> taskIds = resendNotificationRequest.getTaskIds();
+    String type = resendNotificationRequest.getType();
+    String status = resendNotificationRequest.getStatus();
+    Date fromDate = resendNotificationRequest.getFromDate();
+    Date toDate = resendNotificationRequest.getToDate();
 
-    ReceiverInfo ri = new ReceiverInfo();
-    ri.setToAddresses(List.of("")); // invalid
-    ri.setSingleEmail(true);
-    req.setReceiverInfo(ri);
-
-    Data data = new Data();
-    data.setBody("");            // invalid
-    data.setSubject("");         // invalid
-    req.setData(data);
-
-    return req;
-}
-
-// Build valid EmailRequest to pass validation
-private EmailRequest validEmail() {
-    EmailRequest req = new EmailRequest();
-    req.setFromAddress("sender@test.com");
-    req.setSndcod("ABC"); // adjust to your rule
-
-    ReceiverInfo ri = new ReceiverInfo();
-    ri.setToAddresses(List.of("rcpt@test.com"));
-    ri.setSingleEmail(true);
-    req.setReceiverInfo(ri);
-
-    Data data = new Data();
-    data.setBody("Hello");
-    data.setSubject("Subject");
-    req.setData(data);
-
-    return req;
-}
-
-@Test
-void invalid_shouldPrintViolations() {
-    EmailRequest req = invalidEmail();
-
-    ResponseEntity<?> resp = validationService.validateOrFail(req);
-
-    if (resp == null) {
-        System.out.println("FAIL: expected violations but got none");
-        return;
+    // 2. Perform basic validation
+    // Note: The controller should already ensure these fields are not null.
+    if (fromDate.after(toDate)) {
+        // Throwing a BadRequestException is more appropriate here for a 400 error
+        throw new ApiBadRequestException("Bad Request: fromDate cannot be after toDate.");
     }
 
-    System.out.println("STATUS = " + resp.getStatusCode());
-    Object body = resp.getBody();
-    // Expecting List<Violation> where Violation has getField() and getMessage()
-    if (body instanceof java.util.List<?> list) {
-        System.out.println("Violations:");
-        for (Object o : list) {
-            try {
-                var field = o.getClass().getMethod("getField").invoke(o);
-                var msg   = o.getClass().getMethod("getMessage").invoke(o);
-                System.out.println("- " + field + ": " + msg);
-            } catch (Exception reflectionErr) {
-                System.out.println("- " + o);
-            }
-        }
+    // 3. Use taskIds for logging, as required
+    logger.info("Processing resend request with tracking IDs: {}", taskIds);
+
+    // 4. Use the date range to find and update notifications.
+    // This is the main logical change: we ONLY call the date range method.
+    Integer res = resendNotificationsForDateRange(sndcod, type, status, fromDate, toDate);
+
+    // 5. Check the result and return a response
+    if (res != null && res > 0) {
+        logger.info("Successfully resent {} notifications for tracking IDs: {}", res, taskIds);
+        return res;
     } else {
-        System.out.println("Body: " + body);
-    }
-}
-
-@Test
-void valid_shouldPass() {
-    EmailRequest req = validEmail();
-
-    ResponseEntity<?> resp = validationService.validateOrFail(req);
-
-    if (resp == null) {
-        System.out.println("PASS: no violations");
-    } else {
-        System.out.println("FAIL: unexpected violations, status=" + resp.getStatusCode());
-        System.out.println(resp.getBody());
+        // This is correct - throw an exception if no documents were found to update
+        throw new NoDocumentException("No Document Present for the given Sndcod and Date Range");
     }
 }
 
 
+// In your Controller's resendBatchNotification method...
 
+// ======================== START: FINAL VALIDATION ========================
 
+boolean hasTaskIds = resendNotificationRequest.getTaskIds() != null 
+                     && !resendNotificationRequest.getTaskIds().isEmpty();
+boolean hasFromDate = resendNotificationRequest.getFromDate() != null;
+boolean hasToDate = resendNotificationRequest.getToDate() != null; // Also check toDate
 
-
-
-@Autowired
-private ExceptionHandlingService validationService;
-
-// Build ONLY the fields covered by your config
-private EmailRequest buildInvalidForConfig() {
-    EmailRequest req = new EmailRequest();
-
-    // fromAddress (in config) -> make invalid (empty) to trigger regex/required
-    req.setFromAddress("");
-
-    // receiverInfo.toAddresses (in config) -> include one invalid
-    ReceiverInfo ri = new ReceiverInfo();
-    ri.setToAddresses(List.of("not-an-email"));
-    req.setReceiverInfo(ri);
-
-    // data.emailSignature (in config) -> required, set empty/missing
-    Data data = new Data();
-    data.setEmailSignature(""); // to trigger required
-    // data.attachments.sgDocsVersion (in config) -> required
-    // data.attachments.documentName (in config) -> must end with .pdf
-    // data.attachments.documentType (in config) -> required
-    List<Attachment> atts = new ArrayList<>();
-    Attachment att = new Attachment();
-    att.setSgDocsVersion("");            // invalid (required)
-    att.setDocumentName("invoice.txt");  // invalid (must match ^.+\\.pdf$)
-    att.setDocumentType("");             // invalid (required)
-    atts.add(att);
-    data.setAttachments(atts);
-
-    req.setData(data);
-
-    // sndcod (in config) -> must be exactly 3 uppercase letters; make invalid
-    req.setSndcod("ab1");
-
-    return req;
+if (!hasTaskIds || !hasFromDate || !hasToDate) {
+    throw new ApiBadRequestException("Bad Request: taskIds, fromDate, and toDate are all mandatory fields.");
 }
 
-private EmailRequest buildValidForConfig() {
-    EmailRequest req = new EmailRequest();
+// ========================= END: FINAL VALIDATION =========================
 
-    req.setFromAddress("sender@test.com");
-
-    ReceiverInfo ri = new ReceiverInfo();
-    ri.setToAddresses(List.of("recipient@test.com"));
-    req.setReceiverInfo(ri);
-
-    Data data = new Data();
-    data.setEmailSignature("SIG1");
-
-    List<Attachment> atts = new ArrayList<>();
-    Attachment att = new Attachment();
-    att.setSgDocsVersion("v2");          // as per image (v2/v3)
-    att.setDocumentName("invoice.pdf");  // matches ^.+\.pdf$
-    att.setDocumentType("PDF");          // present
-    atts.add(att);
-    data.setAttachments(atts);
-
-    req.setData(data);
-
-    req.setSndcod("ABC"); // matches ^[A-Z]{3}$
-
-    return req;
-}
-
-@Test
-void invalid_shouldPrintConfigViolations() {
-    EmailRequest req = buildInvalidForConfig();
-
-    ResponseEntity<?> resp = validationService.validateOrFail(req);
-
-    if (resp == null) {
-        System.out.println("FAIL: expected violations but got none");
-        return;
-    }
-
-    System.out.println("STATUS: " + resp.getStatusCode());
-    Object body = resp.getBody();
-    if (body instanceof List<?> list) {
-        System.out.println("Violations:");
-        for (Object v : list) {
-            try {
-                var gf = v.getClass().getMethod("getField");
-                var gm = v.getClass().getMethod("getMessage");
-                Object field = gf.invoke(v);
-                Object msg = gm.invoke(v);
-                System.out.println("- " + field + ": " + msg);
-            } catch (Exception e) {
-                System.out.println("- " + v);
-            }
-        }
-    } else {
-        System.out.println("Body: " + body);
-    }
-}
-
-@Test
-void valid_shouldPass() {
-    EmailRequest req = buildValidForConfig();
-
-    ResponseEntity<?> resp = validationService.validateOrFail(req);
-
-    if (resp == null) {
-        System.out.println("PASS: no violations");
-    } else {
-        System.out.println("FAIL: unexpected violations, status=" + resp.getStatusCode());
-        System.out.println(resp.getBody());
-    }
-}
+try {
+    // ... call your service method
+} 
+// ... your catch blocks
