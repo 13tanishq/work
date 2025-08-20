@@ -1,56 +1,21 @@
-@Override
-public Integer updateNotificationStatuses(ResendNotificationRequest resendNotificationRequest)
-        throws NoDocumentException, ApiBadRequestException { // Added ApiBadRequestException
+public static final class Violation {
 
-    // 1. Get all mandatory parameters from the request
-    String sndcod = resendNotificationRequest.getSndcod();
-    List<String> taskIds = resendNotificationRequest.getTaskIds();
-    String type = resendNotificationRequest.getType();
-    String status = resendNotificationRequest.getStatus();
-    Date fromDate = resendNotificationRequest.getFromDate();
-    Date toDate = resendNotificationRequest.getToDate();
+    private final String field;
+    private final String message;
 
-    // 2. Perform basic validation
-    // Note: The controller should already ensure these fields are not null.
-    if (fromDate.after(toDate)) {
-        // Throwing a BadRequestException is more appropriate here for a 400 error
-        throw new ApiBadRequestException("Bad Request: fromDate cannot be after toDate.");
+    public Violation(String field, String message) {
+        this.field = field;
+        this.message = message;
     }
 
-    // 3. Use taskIds for logging, as required
-    logger.info("Processing resend request with tracking IDs: {}", taskIds);
-
-    // 4. Use the date range to find and update notifications.
-    // This is the main logical change: we ONLY call the date range method.
-    Integer res = resendNotificationsForDateRange(sndcod, type, status, fromDate, toDate);
-
-    // 5. Check the result and return a response
-    if (res != null && res > 0) {
-        logger.info("Successfully resent {} notifications for tracking IDs: {}", res, taskIds);
-        return res;
-    } else {
-        // This is correct - throw an exception if no documents were found to update
-        throw new NoDocumentException("No Document Present for the given Sndcod and Date Range");
+    public String getField() {
+        return field;
     }
+
+    public String getMessage() {
+        return message;
+    }
+
+    // You would also typically override equals(), hashCode(), and toString() here
+    // for a complete equivalent, but they are not strictly required for the code to compile.
 }
-
-
-// In your Controller's resendBatchNotification method...
-
-// ======================== START: FINAL VALIDATION ========================
-
-boolean hasTaskIds = resendNotificationRequest.getTaskIds() != null 
-                     && !resendNotificationRequest.getTaskIds().isEmpty();
-boolean hasFromDate = resendNotificationRequest.getFromDate() != null;
-boolean hasToDate = resendNotificationRequest.getToDate() != null; // Also check toDate
-
-if (!hasTaskIds || !hasFromDate || !hasToDate) {
-    throw new ApiBadRequestException("Bad Request: taskIds, fromDate, and toDate are all mandatory fields.");
-}
-
-// ========================= END: FINAL VALIDATION =========================
-
-try {
-    // ... call your service method
-} 
-// ... your catch blocks
