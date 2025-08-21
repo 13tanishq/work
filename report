@@ -1,21 +1,34 @@
-public static final class Violation {
-
-    private final String field;
-    private final String message;
-
-    public Violation(String field, String message) {
-        this.field = field;
-        this.message = message;
+private Integer resendNotificationsForSndcod(String sndcod, String type, String status) {
+    Integer res = null;
+    
+    // This logic is moved from the main method's 'else' block
+    switch (type) {
+        case "ACK_NACK": {
+            if (status.equalsIgnoreCase("ALL")) {
+                res = tdocxmlsicRepository.updateAckNackStatusesBySndcod(sndcod);
+            } else if (status.equalsIgnoreCase("NOTIFICATION_SENT") || status.equalsIgnoreCase("NOTIFICATION_FAILURE")) {
+                res = tdocxmlsicRepository.updateAckNackStatusesBySndcod(sndcod, status);
+            }
+            break;
+        }
+        case "RETURN_STATUS": {
+             if (status.equalsIgnoreCase("ALL")) {
+                res = returnStatusBankService.resendNotificationsBySndcod(sndcod, null);
+            } else if (status.equalsIgnoreCase("NOTIFICATION_SENT") || status.equalsIgnoreCase("NOTIFICATION_FAILURE")) {
+                res = returnStatusBankService.resendNotificationsBySndcod(sndcod, status);
+            }
+            break;
+        }
+        case "BOTH": {
+             if (status.equalsIgnoreCase("ALL")) {
+                res = tdocxmlsicRepository.updateAckNackStatusesBySndcod(sndcod);
+                res += returnStatusBankService.resendNotificationsBySndcod(sndcod, null);
+            } else if (status.equalsIgnoreCase("NOTIFICATION_SENT") || status.equalsIgnoreCase("NOTIFICATION_FAILURE")) {
+                res = tdocxmlsicRepository.updateAckNackStatusesBySndcod(sndcod, status);
+                res += returnStatusBankService.resendNotificationsBySndcod(sndcod, status);
+            }
+            break;
+        }
     }
-
-    public String getField() {
-        return field;
-    }
-
-    public String getMessage() {
-        return message;
-    }
-
-    // You would also typically override equals(), hashCode(), and toString() here
-    // for a complete equivalent, but they are not strictly required for the code to compile.
+    return res;
 }
